@@ -1,0 +1,43 @@
+* OSN Commons
+
+OSN Commons is a collection of reusable code and components
+designed to simplify the development of software projects. Inspired by
+GNULib, OSN Commons provides you a wide range of functionalities that
+can be easily integrated into your projects, giving you a smooth
+development experience so that you can focus on important things.
+
+** Getting Started
+
+To get started, follow these steps:
+
+1. *Download OSN Commons:*
+   You can clone the entire repository:
+   #+BEGIN_SRC bash
+     git clone https://github.com/onesoft-sudo/commons.git
+   #+END_SRC
+   Or, you can browse the code, and pick the tools you need and only
+   download them. Most of these programs and tools are standalone.
+
+2. *Requirements:*
+   Ensure that you have the required runtimes installed to be able to
+   use some of the programs included in OSN commons. Here is the full
+   list of tools you need to have installed:
+
+   + Node.js v20 or later
+   + A POSIX-compliant shell (e.g. Dash)
+      
+3. *Include the tools in your project:*
+   You can just copy and paste these programs into your project, as
+   most of these are standalone and will work as expected.
+
+   We recommend putting these tools inside a specific directory like
+   =build-aux= or =scripts=.
+
+** Licensing
+
+Copyright (C) 2024 OSN, Inc.
+
+OSN Commons is licensed under the [[https://gnu.org/licenses/gpl-3.0.html][GNU General Public License v3.0 or later]].
+It is a free software project.
+
+[[https://www.gnu.org/graphics/gplv3-with-text-136x68.png]]

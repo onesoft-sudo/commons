@@ -1,0 +1,324 @@
+#!/bin/sh
+#
+# distupload -- a script to upload software distributions to a server
+#
+# This script is part of OSN Commons. Copyright (C) 2024 OSN, Inc.
+# 
+# OSN Commons is free software: you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+# 
+# OSN Commons is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with OSN Commons. If not, see <https://www.gnu.org/licenses/>.
+#
+
+me=$0
+canonical_name=$(echo $me | rev | cut -d'/' -f1 | rev)
+
+if [ $(echo $me | cut -c1) = "/" ]; then
+    me=$canonical_name
+fi
+
+version="1.0.0"
+
+check_requirements() {
+    if [ -z "$(command -v grep)" ]; then 
+        echo "$me: GNU grep is required to use this script" >&2
+        exit 1
+    fi
+}
+
+show_help() {
+    cat <<EOF
+Usage: 
+  $me [options] <file...>
+
+Options:
+  -h, --help                 Display this help and exit
+  -v, --version              Display version information and exit
+  -r, --remote=REMOTE        Specify the remote domain to connect to.
+                             Defaults to 'ssh.onesoftnet.eu.org'.
+  -m, --method=METHOD        Specify the method to use to upload the files.
+                             Supported methods are: scp (default), ftp, sftp
+  -u, --username=[USERNAME]  Set your username to authenticate with the 
+                             remote.
+                             If no parameter is passed to this option, it 
+                             will default to your current system username.
+  -p, --password=PASSWORD    Specify a password to authenticate as USERNAME, 
+                             when required. 
+                             Note that when the METHOD is set to scp, you 
+                             must specify the password when scp explicitly 
+                             asks you in your terminal, command line options 
+                             have no effect in this case.
+  -l, --location=LOCATION    Specify a location where the files will be 
+                             uploaded on the remote server.
+                             When using ftp as METHOD, the server might have 
+                             chroot confinement, so the "/" might point to a 
+                             different directory. In that case, specify a 
+                             location accordingly.
+  -q, --quiet                Do not print any output generated from
+                             ftp/sftp/scp.
+
+Feedback, bug reports and general questions should be sent 
+to <commons@lists.onesoftnet.eu.org>.
+EOF
+}
+
+show_version() {
+    cat <<EOF
+$canonical_name v$version (OSN Commons v$version)
+
+This program is free software: you can redistribute it and/or modify it 
+under the terms of the GNU General Public License as published by 
+the Free Software Foundation, either version 3 of the License, 
+or (at your option) any later version.
+
+Written by Ar Rakin.
+EOF
+}
+
+check_optarg() {
+    if [ -z "$2" ]; then
+        echo "$me: option '$1' requires an argument" >&2
+        echo "Try '$me --help' for more information." >&2
+        exit 1
+    fi
+}
+
+validate_domain() {
+    pattern='^[a-zA-Z0-9]([-a-zA-Z0-9]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([-a-zA-Z0-9]*[a-zA-Z0-9])?)*$'
+
+    if echo "$1" | grep -E "^$pattern$" >/dev/null 2>&1; then
+        return
+    fi 
+
+    echo "$me: invalid domain '$1'" >&2
+    exit 1
+}
+
+check_command() {
+    if [ -z "$(command -v $1)" ]; then
+        echo "$me: could not find $1 in \$PATH" >&2
+        echo "$me: please install $1 to use this script" >&2
+        exit 1
+    fi
+}
+
+check_files() {
+    local output="";
+
+    for file in "$@"; do
+        output=$(stat "$file" 2>&1)
+
+        if [ $? -ne 0 ]; then
+            local msg=$(echo $output | cut -c 7-)
+            echo "$me: $msg" >&2
+            exit 1
+        fi
+    done
+}
+
+check_requirements
+
+remote="ssh.onesoftnet.eu.org"
+method="scp"
+username=""
+password=""
+files=""
+location="/srv/www"
+quiet=0
+
+posargs=0
+
+while [ $# -gt 0 ]; do
+    ended=0
+
+    if [ $posargs -eq 0 ]; then
+        case "$1" in
+            -h|-\?|--help)
+                show_help
+                exit
+                ;;
+            -v|--version)
+                show_version
+                exit
+                ;;
+            -m|--method)
+                check_optarg $@
+                method="$2"
+                shift 2
+                ;;
+            -q|--quiet)
+                quiet=1
+                shift
+                ;;
+            -r|--remote)
+                check_optarg $@
+                validate_domain "$2"
+                remote="$2"
+                shift 2
+                ;;
+            -l|--location)
+                check_optarg $@
+                location="$2"
+                shift 2
+                ;;
+            -p|--password)
+                check_optarg $@
+                password="$2"
+                shift 2
+                ;;
+            -u|--username)
+                if [ -z "$2" ]; then
+                    username="$USER"
+                else 
+                    username="$2"
+                fi
+
+                shift 2
+                ;;
+            --)
+                posargs=1
+                shift
+                ;;
+            -*)
+                echo "$me: invalid option -- '$1'" >&2
+                echo "Try '$me --help' for more information" >&2
+                exit 1
+                ;;
+            *)
+                ended=1
+            ;;
+        esac
+    else
+        ended=1
+    fi
+
+    if [ $ended -eq 1 ]; then 
+        if [ ! -z "$files" ]; then
+            files="$files "
+        fi 
+
+        if echo "$file_name" | grep -q "[\ \'\"]"; then
+            echo "$me: file names must not contain spaces or quotes" >&2
+            exit 1
+        fi
+
+        files="$files$1"
+        shift
+    fi
+done
+
+if [ -z "$files" ]; then
+    echo "$me: missing file operand" >&2
+    echo "Try '$me --help' for more information." >&2
+    exit 1
+fi
+
+check_files "$files"
+
+target="$remote"
+
+if [ ! -z "$username" ]; then
+    target="$username@$target"
+fi
+
+echo "$me: using $method to upload files to $target:$location"
+
+if [ ! -z "$username" ]; then 
+    echo "$me: authenticating as $username"
+fi
+
+echo "$me: files to upload: $files"
+
+time_start=$(date +%s)
+
+case $method in
+    scp)
+        check_command scp
+
+        if [ ! -z "$password" ]; then 
+            echo "$me: cannot make any use of the password provided via command line options when using scp"
+            echo "$me: please enter the password when asked by scp"
+        fi 
+        
+        if [ $quiet -eq 1 ]; then
+            scp -- $files "$target:$location" > /dev/null 2>&1
+        else
+            scp -- $files "$target:$location"
+        fi
+
+        code=$?
+        
+        if [ $code -ne 0 ]; then
+            echo "$me: scp failed with exit code $code" >&2
+            exit 1
+        fi
+    ;;
+
+    ftp|sftp)
+        check_command $method
+
+        if [ -z "$username" ]; then 
+            echo "$me: no username provided, using 'anonymous' as default"
+            username=anonymous
+        fi 
+
+        batch_file=$(mktemp)
+
+        if [ $? -ne 0 ]; then
+            echo "$me: failed to create temporary file" >&2
+            exit 1
+        fi
+
+        if [ "$method" = "ftp" ]; then
+            echo "user \"$username\" \"$password\"" > "$batch_file"
+            echo "passive on" >> "$batch_file"
+        fi
+
+        echo "cd $location" >> "$batch_file"
+
+        for file in $files; do
+            echo "put $file" >> "$batch_file"
+        done
+        
+        echo "bye" >> "$batch_file"
+
+        if [ "$method" = "sftp" ]; then
+            if [ $quiet -eq 1 ]; then
+                sftp -oBatchMode=no -b "$batch_file" "$target" > /dev/null 2>&1
+            else
+                sftp -oBatchMode=no -b "$batch_file" "$target"
+            fi
+        else
+            if [ $quiet -eq 1 ]; then
+                cat "$batch_file" | $method -inv "$remote" > /dev/null 2>&1
+            else
+                cat "$batch_file" | $method -inv "$remote"
+            fi
+        fi
+
+        code=$?
+        
+        if [ $code -ne 0 ]; then
+            echo "$me: $method failed with exit code $code" >&2
+            exit 1
+        fi
+    ;;
+
+    *)
+        echo "$me: unsupported method '$method'" >&2
+        exit 1
+    ;;
+esac
+
+time_end=$(date +%s)
+time_diff=$((time_end - time_start))
+
+echo "$me: upload complete in ${time_diff}s"

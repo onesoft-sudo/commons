@@ -10,28 +10,30 @@ development experience so that you can focus on important things.
 
 To get started, follow these steps:
 
-1. *Download OSN Commons:*
-   You can clone the entire repository:
-   #+BEGIN_SRC bash
-     git clone https://github.com/onesoft-sudo/commons.git
-   #+END_SRC
-   Or, you can browse the code, and pick the tools you need and only
-   download them. Most of these programs and tools are standalone.
+**** Download OSN Commons
 
-2. *Requirements:*
-   Ensure that you have the required runtimes installed to be able to
-   use some of the programs included in OSN commons. Here is the full
-   list of tools you need to have installed:
+You can clone the entire repository:
+#+BEGIN_SRC bash
+  git clone https://github.com/onesoft-sudo/commons.git
+#+END_SRC
+Or, you can browse the code, and pick the tools you need and only
+download them. Most of these programs and tools are standalone.
 
-   + Node.js v20 or later
-   + A POSIX-compliant shell (e.g. Dash)
+**** Requirements
+
+Ensure that you have the required runtimes installed to be able to
+use some of the programs included in OSN commons. Here is the full
+list of tools you need to have installed:
+
++ Node.js v20 or later
++ A POSIX-compliant shell (e.g. Dash)
       
-3. *Include the tools in your project:*
-   You can just copy and paste these programs into your project, as
-   most of these are standalone and will work as expected.
+**** Include the tools in your project
 
-   We recommend putting these tools inside a specific directory like
-   =build-aux= or =scripts=.
+You can just copy and paste these programs into your project, as
+most of these are standalone and will work as expected.
+We recommend putting these tools inside a specific directory like
+=build-aux= or =scripts=.
 
 ** Licensing
 

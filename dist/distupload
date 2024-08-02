@@ -124,9 +124,36 @@ check_files() {
     done
 }
 
+generate_gpg_signature() {
+    local files="$@"
+
+    if [ -z "$(command -v gpg)" ]; then
+        echo "$me: gpg could not be found in \$PATH, please make sure it is installed" >&2
+        exit 1
+    fi
+
+    echo "$me: generating GPG signatures, please enter your passphrase when asked"
+
+    for file in $files; do
+        if [ -f "$file.sig" ]; then
+            echo "$me: signature file $file.sig already exists, skipping" >&2
+            continue
+        fi
+
+        echo "$me: generating GPG signature for $file"
+        gpg --detach-sign  --armor -o - -- "$file" > "$file.sig"
+
+        if [ $? -ne 0 ]; then
+            echo "$me: failed to generate signature for $file" >&2
+            rm -f "$file.sig"
+            exit 1
+        fi
+    done
+}
+
 check_requirements
 
-remote="ssh.onesoftnet.eu.org"
+remote="localhost"
 method="scp"
 username=""
 password=""
@@ -235,7 +262,17 @@ if [ ! -z "$username" ]; then
     echo "$me: authenticating as $username"
 fi
 
-echo "$me: files to upload: $files"
+generate_gpg_signature "$files"
+
+echo "$me: files to upload: $files (with GPG signatures)"
+
+sigs=""
+
+for file in $files; do
+    sigs="$sigs $file.sig"
+done
+
+files="$files $sigs"
 
 time_start=$(date +%s)
 
@@ -320,5 +357,11 @@ esac
 
 time_end=$(date +%s)
 time_diff=$((time_end - time_start))
+
+echo "$me: cleaning up signature files"
+
+for sigfile in $sigs; do
+    rm -f "$sigfile"
+done
 
 echo "$me: upload complete in ${time_diff}s"

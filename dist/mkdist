@@ -1,0 +1,382 @@
+#!/bin/sh
+#
+# mkdist -- a script to create software distributions
+#
+# This script is part of OSN Commons. Copyright (C) 2024 OSN, Inc.
+# 
+# OSN Commons is free software: you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+# 
+# OSN Commons is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with OSN Commons. If not, see <https://www.gnu.org/licenses/>.
+#
+
+me=$0
+canonical_name=$(echo $me | rev | cut -d'/' -f1 | rev)
+
+if [ $(echo $me | cut -c1) = "/" ]; then
+    me=$canonical_name
+fi
+
+version="1.0.0"
+
+check_requirements() {
+    if [ -z "$(command -v tar)" ]; then 
+        echo "$me: GNU tar is required to use this script" >&2
+        exit 1
+    fi
+
+    if [ -z "$(command -v jq)" ]; then 
+        echo "$me: jq is required to use this script" >&2
+        exit 1
+    fi
+
+    if [ -z "$(command -v rsync)" ]; then 
+        echo "$me: rsync is required to use this script" >&2
+        exit 1
+    fi
+
+    if [ -z "$(command -v sed)" ]; then 
+        echo "$me: sed is required to use this script" >&2
+        exit 1
+    fi
+}
+
+show_help() {
+    cat <<EOF
+Usage:
+    $me [options] [directory]
+
+Create a software distribution from a directory.
+
+Options:
+    -h, --help             Display this help and exit
+    -v, --version          Display version information and exit
+    -f, --formats=FORMATS  Specify the format(s) of the output 
+                           archives. Multiple formats can be specified, 
+                           separated by commas.
+                           Supported formats are: tar.gz, tar.bz2, 
+                           tar.xz, zip. Defaults to tar.gz.
+    -o, --output-path      Specify the path where the output archives 
+                           will be saved. Defaults to the current 
+                           directory.
+    -n, --output-basename  Specify the basename of the output archives. 
+                           Defaults to the name of the directory being 
+                           archived.
+    -e, --exclude=PATTERN  Exclude files or directories matching PATTERN 
+                           from the archive. This option can be specified 
+                           multiple times.
+        --exclude-from     Read the list of patterns to exclude from the 
+                           file specified by the argument.
+    -t, --archive-version  Create a .tarball-version/.zipball-version 
+                           file in the output archives containing the 
+                           given version argument.
+    -V, --verbose          Enable verbose output.
+
+Bug reports and questions should be sent to <commons@lists.onesoftnet.eu.org>.
+EOF
+}
+
+show_version() {
+    cat <<EOF
+$canonical_name (OSN Commons) v$version
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+Written by Ar Rakin.
+EOF
+}
+
+stat_directory() {
+    local result;
+    result=$(stat "$1" 2>&1)
+
+    if [ $? -ne 0 ]; then
+        local msg=$(echo $result | cut -c 7-)
+        echo "$me: $msg" >&2
+        exit 1
+    fi
+
+    if [ ! -d "$1" ]; then
+        echo "$me: '$1' is not a directory" >&2
+        exit 1
+    fi
+
+    if [ ! -r "$1" ]; then
+        echo "$me: cannot read directory '$1'" >&2
+        exit 1
+    fi
+
+    if [ ! -x "$1" ]; then
+        echo "$me: cannot access directory '$1'" >&2
+        exit 1
+    fi
+}
+
+check_optarg() {
+    if [ -z "$2" ]; then
+        echo "$me: option '$1' requires an argument" >&2
+        echo "Try '$me --help' for more information." >&2
+        exit 1
+    fi
+}
+
+find_version() {
+    json_filename=""
+
+    if [ -f "$1/package.json" ]; then
+        json_filename="$1/package.json"
+    elif [ -f "$1/composer.json" ]; then
+        json_filename="$1/composer.json"
+    elif [ -f "$1/version.json" ]; then
+        json_filename="$1/version.json"
+    fi
+
+    if [ ! -z "$json_filename" ]; then
+        local version=$(jq -r .version "$1/package.json")
+
+        if [ -n "$version" ]; then
+            echo $version
+            return
+        fi
+    fi
+
+    if [ -f "$1/.version" ]; then
+        local version=$(cat "$1/.version")
+
+        if [ -n "$version" ]; then
+            echo $version
+            return
+        fi
+    fi
+
+    latest_git_tag=$(git -C "$1" describe --tags --abbrev=0 2>/dev/null)
+
+    if [ -n "$latest_git_tag" ]; then
+        echo $latest_git_tag
+        return
+    fi
+}
+
+find_name() {
+    json_filename=""
+
+    if [ -f "$1/package.json" ]; then
+        json_filename="$1/package.json"
+    elif [ -f "$1/composer.json" ]; then
+        json_filename="$1/composer.json"
+    elif [ -f "$1/version.json" ]; then
+        json_filename="$1/version.json"
+    fi
+
+    if [ ! -z "$json_filename" ]; then
+        local name=$(jq -r .name "$1/package.json")
+
+        if [ -n "$name" ]; then
+            echo $name
+            return
+        fi
+    fi
+}
+
+# Default values
+formats="tar.gz"
+output_path="."
+output_basename=""
+excludes="--exclude=.git --exclude=.svn"
+archive_version=""
+verbose=0
+target=""
+
+# Parse command line arguments
+posarg_start=0
+
+while [ $# -gt 0 ]; do
+    if [ $posarg_start -eq 1 ]; then
+        break
+    fi
+
+    case $1 in
+        -h|--help)
+            show_help
+            exit 0
+            ;;
+        -v|--version)
+            show_version
+            exit 0
+            ;;
+        -f|--formats)
+            check_optarg $@
+            shift
+            formats=$(echo $1 | tr ',' ' ')
+            ;;
+        -o|--output-path)
+            check_optarg $@
+            shift
+            output_path=$1
+            ;;
+        -n|--output-basename)
+            check_optarg $@
+            shift
+            output_basename="$1"
+            ;;
+        -e|--exclude)
+            check_optarg $@
+            shift
+            escaped=$(echo "$1" | sed 's/"/\\"/g')
+            excludes="$excludes --exclude \"$escaped\""
+            ;;
+        --exclude-from)
+            check_optarg $@
+            shift
+            escaped=$(echo "$1" | sed 's/"/\\"/g')
+            excludes="$excludes --exclude-from \"$escaped\""
+            ;;
+        -t|--archive-version)
+            check_optarg $@
+            shift
+            archive_version="$1"
+            ;;
+        -V|--verbose)
+            verbose=1
+            ;;
+        --)
+            posarg_start=1
+            shift
+            break
+            ;;
+        -*)
+            echo "$me: invalid option '$1'" >&2
+            echo "Try '$me --help' for more information." >&2
+            exit 1
+            ;;
+        *)
+            if [ ! -z "$target" ]; then
+                echo "$me: too many arguments provided" >&2
+                echo "Try '$me --help' for more information." >&2
+                exit 1
+            fi
+
+            target="$1"
+            ;;
+    esac
+    shift
+done
+
+if [ -z "$target" ]; then
+    echo "$me: missing directory operand" >&2
+    echo "Try '$me --help' for more information." >&2
+    exit 1
+fi
+
+stat_directory "$target"
+
+# Set the output basename if not provided
+if [ -z "$output_basename" ]; then
+    output_basename=$(find_name "$target")
+fi
+
+if [ -z "$output_basename" ]; then
+    output_basename=$(readlink -f "$target")
+    output_basename=$(basename "$output_basename")
+fi
+
+if [ -z "$archive_version" ]; then
+    archive_version=$(find_version "$target")
+fi
+
+if [ -z "$archive_version" ]; then
+    archive_version="0.0.0"
+fi
+
+echo "$me: preparing '$target' for packaging"
+
+tmpdir=$(mktemp -d)
+rsync_tmpdir="$tmpdir/$output_basename"
+
+mkdir $rsync_tmpdir
+
+if [ $verbose -eq 1 ]; then
+    echo "$me: copying files to temporary directory"
+fi
+
+rsync_cmd="rsync -a $excludes $target/ $rsync_tmpdir/"
+
+if [ $verbose -eq 1 ]; then
+    echo "$me: executing: $rsync_cmd"
+fi
+
+eval $rsync_cmd
+
+for format in "$formats"; do
+    archive_name="${output_basename}-${archive_version}.$format"
+
+    if echo "$format" | grep -o "tar" > /dev/null 2>&1; then
+        echo "$archive_version" > $rsync_tmpdir/.tarball-version
+    fi
+
+    if [ "$format" = "zip" ]; then
+        echo "$archive_version" > $rsync_tmpdir/.zipball-version
+    fi
+
+    case "$format" in
+        tar.gz|tar.bz2|tar.xz)
+            flag=""
+
+            case "$format" in
+                tar.gz)
+                    flag="z"
+                    ;;
+                tar.bz2)
+                    flag="j"
+                    ;;
+                tar.xz)
+                    flag="J"
+                    ;;
+            esac
+
+            tar_cmd="tar -c${flag}f "$output_path/$archive_name" -C "$tmpdir" ."
+
+            if [ $verbose -eq 1 ]; then
+                echo "$me: executing: $tar_cmd"
+            fi
+
+            eval $tar_cmd
+            ;;
+        zip)
+            zip_cmd="zip -r "$output_path/$archive_name" $tmpdir"
+
+            if [ $verbose -eq 1 ]; then
+                echo "$me: executing: $zip_cmd"
+            fi
+
+            eval $zip_cmd
+            ;;
+        
+        *)
+            echo "$me: unsupported format '$format'" >&2
+            exit 1
+            ;;
+    esac
+
+    rm -f $rsync_tmpdir/.tarball-version
+    rm -f $rsync_tmpdir/.zipball-version
+done
+
+rm_flags=-rf
+
+if [ $verbose -eq 1 ]; then 
+    rm_flags="${rm_flags}v"
+fi
+
+rm $rm_flags $rsync_tmpdir

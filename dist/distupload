@@ -72,7 +72,7 @@ EOF
 
 show_version() {
     cat <<EOF
-$canonical_name v$version (OSN Commons v$version)
+$canonical_name (OSN Commons) v$version
 
 This program is free software: you can redistribute it and/or modify it 
 under the terms of the GNU General Public License as published by 

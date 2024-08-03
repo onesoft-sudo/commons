@@ -1,0 +1,33 @@
+03-07-2024  Ar Rakin <rakinar2@onesoftnet.eu.org>
+
+        fix(git:genchangelog): ignore branch and PR merge commit messages
+
+        chore: add .prettierrc
+
+        feat(dist:mkdist): a script to automate generation of software distributions
+
+        fix(dist:distupload): version text
+
+        fix: correct bug report email
+
+02-07-2024  Ar Rakin <rakinar2@onesoftnet.eu.org>
+
+        feat(dist:distupload): generate gpg signature of files being uploaded
+
+01-07-2024  Ar Rakin <rakinar2@onesoftnet.eu.org>
+
+        feat: add distupload helper script
+
+        chore: add gitignore
+
+28-06-2024  Ar Rakin <68149013+virtual-designer@users.noreply.github.com>
+
+        chore: update README.org
+
+28-06-2024  Ar Rakin <rakinar2@onesoftnet.eu.org>
+
+        chore: update readme
+
+        chore: rename readme file to README.org
+
+        feat: initial commit

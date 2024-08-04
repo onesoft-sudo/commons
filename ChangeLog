@@ -1,4 +1,18 @@
+04-07-2024  Ar Rakin <rakinar2@onesoftnet.eu.org>
+
+        fix(mkdist): incorrect root directory name for created tarballs
+
+        fix(distupload): correct default remote url in help text
+
+        chore: correct mailing list
+
+        chore: add .editorconfig
+
+        style: reformat files
+
 03-07-2024  Ar Rakin <rakinar2@onesoftnet.eu.org>
+
+        chore: add changelog
 
         fix(git:genchangelog): ignore branch and PR merge commit messages
 

@@ -52,7 +52,7 @@ check_requirements() {
 show_help() {
     cat <<EOF
 Usage:
-    $me [options] [directory]
+    $me [options] <directory>
 
 Create a software distribution from a directory.
 
@@ -302,7 +302,7 @@ fi
 echo "$me: preparing '$target' for packaging"
 
 tmpdir=$(mktemp -d)
-rsync_tmpdir="$tmpdir/$output_basename"
+rsync_tmpdir="$tmpdir/${output_basename}-${archive_version}"
 
 mkdir $rsync_tmpdir
 

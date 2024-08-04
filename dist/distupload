@@ -43,7 +43,7 @@ Options:
   -h, --help                 Display this help and exit
   -v, --version              Display version information and exit
   -r, --remote=REMOTE        Specify the remote domain to connect to.
-                             Defaults to 'ssh.onesoftnet.eu.org'.
+                             Defaults to 'localhost'.
   -m, --method=METHOD        Specify the method to use to upload the files.
                              Supported methods are: scp (default), ftp, sftp
   -u, --username=[USERNAME]  Set your username to authenticate with the 

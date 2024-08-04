@@ -3,12 +3,12 @@
 # mkdist -- a script to create software distributions
 #
 # This script is part of OSN Commons. Copyright (C) 2024 OSN, Inc.
-# 
+#
 # OSN Commons is free software: you can redistribute it and/or modify it
 # under the terms of the GNU General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
 # (at your option) any later version.
-# 
+#
 # OSN Commons is distributed in the hope that it will be useful,
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
@@ -28,22 +28,22 @@ fi
 version="1.0.0"
 
 check_requirements() {
-    if [ -z "$(command -v tar)" ]; then 
+    if [ -z "$(command -v tar)" ]; then
         echo "$me: GNU tar is required to use this script" >&2
         exit 1
     fi
 
-    if [ -z "$(command -v jq)" ]; then 
+    if [ -z "$(command -v jq)" ]; then
         echo "$me: jq is required to use this script" >&2
         exit 1
     fi
 
-    if [ -z "$(command -v rsync)" ]; then 
+    if [ -z "$(command -v rsync)" ]; then
         echo "$me: rsync is required to use this script" >&2
         exit 1
     fi
 
-    if [ -z "$(command -v sed)" ]; then 
+    if [ -z "$(command -v sed)" ]; then
         echo "$me: sed is required to use this script" >&2
         exit 1
     fi
@@ -98,7 +98,7 @@ EOF
 }
 
 stat_directory() {
-    local result;
+    local result
     result=$(stat "$1" 2>&1)
 
     if [ $? -ne 0 ]; then
@@ -207,68 +207,68 @@ while [ $# -gt 0 ]; do
     fi
 
     case $1 in
-        -h|--help)
-            show_help
-            exit 0
-            ;;
-        -v|--version)
-            show_version
-            exit 0
-            ;;
-        -f|--formats)
-            check_optarg $@
-            shift
-            formats=$(echo $1 | tr ',' ' ')
-            ;;
-        -o|--output-path)
-            check_optarg $@
-            shift
-            output_path=$1
-            ;;
-        -n|--output-basename)
-            check_optarg $@
-            shift
-            output_basename="$1"
-            ;;
-        -e|--exclude)
-            check_optarg $@
-            shift
-            escaped=$(echo "$1" | sed 's/"/\\"/g')
-            excludes="$excludes --exclude \"$escaped\""
-            ;;
-        --exclude-from)
-            check_optarg $@
-            shift
-            escaped=$(echo "$1" | sed 's/"/\\"/g')
-            excludes="$excludes --exclude-from \"$escaped\""
-            ;;
-        -t|--archive-version)
-            check_optarg $@
-            shift
-            archive_version="$1"
-            ;;
-        -V|--verbose)
-            verbose=1
-            ;;
-        --)
-            posarg_start=1
-            shift
-            break
-            ;;
-        -*)
-            echo "$me: invalid option '$1'" >&2
+    -h | --help)
+        show_help
+        exit 0
+        ;;
+    -v | --version)
+        show_version
+        exit 0
+        ;;
+    -f | --formats)
+        check_optarg $@
+        shift
+        formats=$(echo $1 | tr ',' ' ')
+        ;;
+    -o | --output-path)
+        check_optarg $@
+        shift
+        output_path=$1
+        ;;
+    -n | --output-basename)
+        check_optarg $@
+        shift
+        output_basename="$1"
+        ;;
+    -e | --exclude)
+        check_optarg $@
+        shift
+        escaped=$(echo "$1" | sed 's/"/\\"/g')
+        excludes="$excludes --exclude \"$escaped\""
+        ;;
+    --exclude-from)
+        check_optarg $@
+        shift
+        escaped=$(echo "$1" | sed 's/"/\\"/g')
+        excludes="$excludes --exclude-from \"$escaped\""
+        ;;
+    -t | --archive-version)
+        check_optarg $@
+        shift
+        archive_version="$1"
+        ;;
+    -V | --verbose)
+        verbose=1
+        ;;
+    --)
+        posarg_start=1
+        shift
+        break
+        ;;
+    -*)
+        echo "$me: invalid option '$1'" >&2
+        echo "Try '$me --help' for more information." >&2
+        exit 1
+        ;;
+    *)
+        if [ ! -z "$target" ]; then
+            echo "$me: too many arguments provided" >&2
             echo "Try '$me --help' for more information." >&2
             exit 1
-            ;;
-        *)
-            if [ ! -z "$target" ]; then
-                echo "$me: too many arguments provided" >&2
-                echo "Try '$me --help' for more information." >&2
-                exit 1
-            fi
+        fi
 
-            target="$1"
-            ;;
+        target="$1"
+        ;;
     esac
     shift
 done
@@ -321,52 +321,52 @@ eval $rsync_cmd
 for format in "$formats"; do
     archive_name="${output_basename}-${archive_version}.$format"
 
-    if echo "$format" | grep -o "tar" > /dev/null 2>&1; then
-        echo "$archive_version" > $rsync_tmpdir/.tarball-version
+    if echo "$format" | grep -o "tar" >/dev/null 2>&1; then
+        echo "$archive_version" >$rsync_tmpdir/.tarball-version
     fi
 
     if [ "$format" = "zip" ]; then
-        echo "$archive_version" > $rsync_tmpdir/.zipball-version
+        echo "$archive_version" >$rsync_tmpdir/.zipball-version
     fi
 
     case "$format" in
-        tar.gz|tar.bz2|tar.xz)
-            flag=""
+    tar.gz | tar.bz2 | tar.xz)
+        flag=""
 
-            case "$format" in
-                tar.gz)
-                    flag="z"
-                    ;;
-                tar.bz2)
-                    flag="j"
-                    ;;
-                tar.xz)
-                    flag="J"
-                    ;;
-            esac
-
-            tar_cmd="tar -c${flag}f "$output_path/$archive_name" -C "$tmpdir" ."
-
-            if [ $verbose -eq 1 ]; then
-                echo "$me: executing: $tar_cmd"
-            fi
-
-            eval $tar_cmd
+        case "$format" in
+        tar.gz)
+            flag="z"
             ;;
-        zip)
-            zip_cmd="zip -r "$output_path/$archive_name" $tmpdir"
-
-            if [ $verbose -eq 1 ]; then
-                echo "$me: executing: $zip_cmd"
-            fi
-
-            eval $zip_cmd
+        tar.bz2)
+            flag="j"
             ;;
-        
-        *)
-            echo "$me: unsupported format '$format'" >&2
-            exit 1
+        tar.xz)
+            flag="J"
             ;;
+        esac
+
+        tar_cmd="tar -c${flag}f "$output_path/$archive_name" -C "$tmpdir" ."
+
+        if [ $verbose -eq 1 ]; then
+            echo "$me: executing: $tar_cmd"
+        fi
+
+        eval $tar_cmd
+        ;;
+    zip)
+        zip_cmd="zip -r "$output_path/$archive_name" $tmpdir"
+
+        if [ $verbose -eq 1 ]; then
+            echo "$me: executing: $zip_cmd"
+        fi
+
+        eval $zip_cmd
+        ;;
+
+    *)
+        echo "$me: unsupported format '$format'" >&2
+        exit 1
+        ;;
     esac
 
     rm -f $rsync_tmpdir/.tarball-version
@@ -375,7 +375,7 @@ done
 
 rm_flags=-rf
 
-if [ $verbose -eq 1 ]; then 
+if [ $verbose -eq 1 ]; then
     rm_flags="${rm_flags}v"
 fi
 

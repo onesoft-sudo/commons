@@ -80,7 +80,7 @@ Options:
                            given version argument.
     -V, --verbose          Enable verbose output.
 
-Bug reports and questions should be sent to <commons@lists.onesoftnet.eu.org>.
+Bug reports and questions should be sent to <commons@onesoftnet.eu.org>.
 EOF
 }
 

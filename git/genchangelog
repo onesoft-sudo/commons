@@ -220,7 +220,7 @@ function printHelp() {
     console.log("                       file if it exists already.");
     console.log();
     console.log("Send general inquiries, questions and bug reports");
-    console.log("to <commons@lists.onesoftnet.eu.org>.");
+    console.log("to <commons@onesoftnet.eu.org>.");
 }
 
 function printVersion() {

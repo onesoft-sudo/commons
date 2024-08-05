@@ -1,0 +1,17 @@
+IndentWidth: 4
+IndentStyle: Spaces
+BasedOnStyle: GNU
+ColumnLimit: 80
+BreakBeforeBraces: GNU
+UseTab: Never
+SpaceAfterCStyleCast: true
+SpaceAfterFunctionName: false
+AlignArrayOfStructures: Left
+IndentPPDirectives: AfterHash
+# IndentCaseLabels: true
+# SpaceBeforeParens: Custom
+# SpaceBeforeParensOptions:
+#   AfterControlStatements: true
+#   AfterFunctionDefinitionName: false
+#   AfterFunctionDeclarationName: false
+#   BeforeNonEmptyParentheses: false

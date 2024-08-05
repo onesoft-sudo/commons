@@ -1,3 +1,7 @@
+05-07-2024  Ar Rakin <rakinar2@onesoftnet.eu.org>
+
+        feat: add programs implementing the universal archive format
+
 04-07-2024  Ar Rakin <rakinar2@onesoftnet.eu.org>
 
         fix(mkdist): incorrect root directory name for created tarballs

@@ -1,0 +1,3 @@
+* TODOs
+
++ =uar.c=: add better syscall errno handling; store current errno locally in the available =struct uar *=.

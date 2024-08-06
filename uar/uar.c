@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -23,6 +24,8 @@
 #else
 #    include <limits.h>
 #endif
+
+#define UAR_ROOT_DIR_NAME 0x01
 
 const unsigned char UAR_MAGIC[] = { 0x99, 'U', 'A', 'R' };
 
@@ -45,9 +48,10 @@ enum uar_file_type
 struct uar_file
 {
     enum uar_file_type type;
+    int __pad1;
     char *name;
     uint64_t namelen;
-    uint32_t offset;
+    uint64_t offset;
     union
     {
         uint64_t size;
@@ -58,6 +62,7 @@ struct uar_file
         } linkinfo;
     } data;
     mode_t mode;
+    int __pad2;
 };
 
 struct uar_archive
@@ -109,6 +114,27 @@ uar_has_error (const struct uar_archive *restrict uar)
 }
 
 struct uar_archive *
+uar_create (void)
+{
+    struct uar_archive *uar = malloc (sizeof (struct uar_archive));
+
+    if (uar == NULL)
+        return NULL;
+
+    uar->is_stream = false;
+    uar->buffer = NULL;
+    uar->ecode = UAR_SUCCESS;
+    uar->header.size = 0;
+    memcpy (uar->header.magic, UAR_MAGIC, 4);
+    uar->header.version = 1;
+    uar->header.flags = 0;
+    uar->header.nfiles = 0;
+    uar->files = NULL;
+
+    return uar;
+}
+
+struct uar_archive *
 uar_open (const char *filename)
 {
     struct uar_archive *uar = NULL;
@@ -116,7 +142,7 @@ uar_open (const char *filename)
     int cerrno;
 
     errno = 0;
-    uar = malloc (sizeof (struct uar_archive));
+    uar = uar_create ();
 
     if (uar == NULL)
         return NULL;
@@ -189,7 +215,7 @@ uar_open (const char *filename)
                     goto uar_open_ret;
                 }
 
-            file->name = malloc (file->namelen);
+            file->name = malloc (file->namelen + 1);
 
             if (file->name == NULL)
                 {
@@ -203,6 +229,7 @@ uar_open (const char *filename)
                     goto uar_open_ret;
                 }
 
+            file->name[file->namelen] = 0;
             uar->files[i] = file;
         }
 
@@ -228,33 +255,31 @@ uar_open_ret:
 }
 
 void
+uar_file_destroy (struct uar_file *file)
+{
+    if (file == NULL)
+        return;
+
+    free (file->name);
+    free (file);
+}
+
+void
 uar_close (struct uar_archive *uar)
 {
     if (uar == NULL)
         return;
 
     free (uar->buffer);
+
+    for (uint64_t i = 0; i < uar->header.nfiles; i++)
+        {
+            struct uar_file *file = uar->files[i];
+            uar_file_destroy (file);
+        }
+
     free (uar->files);
     free (uar);
-}
-
-struct uar_archive *
-uar_create ()
-{
-    struct uar_archive *uar = malloc (sizeof (struct uar_archive));
-
-    if (uar == NULL)
-        return NULL;
-
-    uar->is_stream = false;
-    uar->buffer = NULL;
-    uar->header.size = sizeof (struct uar_header);
-    memcpy (uar->header.magic, UAR_MAGIC, 4);
-    uar->header.version = 1;
-    uar->header.flags = 0;
-    uar->header.nfiles = 0;
-
-    return uar;
 }
 
 bool
@@ -285,6 +310,7 @@ uar_file_create (const char *name, uint64_t namelen, uint64_t size,
                  uint32_t offset)
 {
     struct uar_file *file;
+    int cerrno;
     assert (namelen < PATH_MAX);
 
     file = malloc (sizeof (struct uar_file));
@@ -292,13 +318,17 @@ uar_file_create (const char *name, uint64_t namelen, uint64_t size,
     if (file == NULL)
         return NULL;
 
+    bzero (file, sizeof (struct uar_file));
+
     file->type = UF_FILE;
     file->mode = 0644;
     file->name = malloc (namelen + 1);
 
     if (file->name == NULL)
         {
+            cerrno = errno;
             free (file);
+            errno = cerrno;
             return NULL;
         }
 
@@ -309,16 +339,6 @@ uar_file_create (const char *name, uint64_t namelen, uint64_t size,
 
     strncpy (file->name, name, namelen);
     return file;
-}
-
-void
-uar_file_destroy (struct uar_file *file)
-{
-    if (file == NULL)
-        return;
-
-    free (file->name);
-    free (file);
 }
 
 struct uar_file *
@@ -347,7 +367,15 @@ uar_add_file (struct uar_archive *restrict uar, const char *name,
         }
 
     fseek (stream, 0, SEEK_END);
-    uint64_t size = ftell (stream);
+    long size = ftell (stream);
+
+    if (size < 0)
+        {
+            uar_set_error (uar, UAR_IO_ERROR);
+            fclose (stream);
+            return NULL;
+        }
+
     fseek (stream, 0, SEEK_SET);
 
     struct uar_file *file
@@ -378,7 +406,7 @@ uar_add_file (struct uar_archive *restrict uar, const char *name,
             return NULL;
         }
 
-    if (fread (uar->buffer + file->offset, size, 1, stream) != 1)
+    if (size != 0 && fread (uar->buffer + file->offset, size, 1, stream) != 1)
         {
             uar_set_error (uar, UAR_IO_ERROR);
             fclose (stream);
@@ -405,14 +433,28 @@ path_concat (const char *p1, const char *p2, size_t len1, size_t len2)
 }
 
 struct uar_file *
-uar_add_dir (struct uar_archive *uar, const char *name, const char *path)
+uar_add_dir (struct uar_archive *uar, const char *dname, const char *path)
 {
     assert (uar != NULL && "uar is NULL");
-    assert (name != NULL && "name is NULL");
+    assert (dname != NULL && "dname is NULL");
     assert (path != NULL && "path is NULL");
     assert (!uar->is_stream && "uar in non-stream mode is not supported yet");
 
-    uint64_t namelen = strlen (name);
+    char *name = (char *) dname;
+    bool free_name = false;
+    int cerrno;
+    uint64_t namelen;
+
+    if (strcmp (name, ".") == 0)
+        {
+            name = malloc (2);
+            name[0] = UAR_ROOT_DIR_NAME;
+            name[1] = 0;
+            free_name = true;
+            namelen = 1;
+        }
+    else
+        namelen = strlen (name);
 
     if (namelen >= PATH_MAX)
         {
@@ -467,14 +509,8 @@ uar_add_dir (struct uar_archive *uar, const char *name, const char *path)
 
             if (stat (fullpath, &stinfo) != 0)
                 {
-                    int current_errno = errno;
                     uar_set_error (uar, UAR_IO_ERROR);
-                    uar_file_destroy (dir_file);
-                    closedir (dir);
-                    free (fullpath);
-                    free (fullname);
-                    errno = current_errno;
-                    return NULL;
+                    goto uar_add_dir_error;
                 }
 
             if (S_ISREG (stinfo.st_mode))
@@ -484,13 +520,7 @@ uar_add_dir (struct uar_archive *uar, const char *name, const char *path)
 
                     if (file == NULL)
                         {
-                            int current_errno = errno;
-                            uar_file_destroy (dir_file);
-                            closedir (dir);
-                            free (fullpath);
-                            free (fullname);
-                            errno = current_errno;
-                            return NULL;
+                            goto uar_add_dir_error;
                         }
 
                     file->mode = stinfo.st_mode & 07777;
@@ -503,13 +533,7 @@ uar_add_dir (struct uar_archive *uar, const char *name, const char *path)
 
                     if (direntry == NULL)
                         {
-                            int current_errno = errno;
-                            uar_file_destroy (dir_file);
-                            closedir (dir);
-                            free (fullpath);
-                            free (fullname);
-                            errno = current_errno;
-                            return NULL;
+                            goto uar_add_dir_error;
                         }
 
                     direntry->mode = stinfo.st_mode & 07777;
@@ -519,13 +543,30 @@ uar_add_dir (struct uar_archive *uar, const char *name, const char *path)
                 assert (false && "Not supported");
 
             free (fullpath);
-        }
+            free (fullname);
 
-    closedir (dir);
+            continue;
+
+        uar_add_dir_error:
+            cerrno = errno;
+            uar_file_destroy (dir_file);
+            free (fullpath);
+            free (fullname);
+            errno = cerrno;
+            goto uar_add_dir_end;
+        }
 
     dir_file->type = UF_DIR;
     dir_file->data.size = dir_size;
 
+uar_add_dir_end:
+    cerrno = errno;
+    closedir (dir);
+
+    if (free_name)
+        free (name);
+
+    errno = cerrno;
     return dir_file;
 }
 
@@ -582,11 +623,14 @@ uar_debug_print (const struct uar_archive *uar, bool print_file_contents)
                     : file->type == UF_DIR ? "directory"
                                            : "link",
                     i);
-            printf ("    name: \033[1m%s%s\033[0m\n", file->name,
+            printf ("    name: \033[1m%s%s%s\033[0m\n",
+                    file->name[0] == UAR_ROOT_DIR_NAME ? "/" : "",
+                    file->name[0] == UAR_ROOT_DIR_NAME ? file->name + 2
+                                                       : file->name,
                     file->type == UF_DIR    ? "/"
                     : file->type == UF_LINK ? "@"
                                             : "");
-            printf ("    offset: %u\n", file->offset);
+            printf ("    offset: %lu\n", file->offset);
             printf ("    mode: %04o\n", file->mode);
 
             switch (file->type)
@@ -643,7 +687,7 @@ uar_write (struct uar_archive *uar, const char *filename)
                 }
         }
 
-    if (fwrite (uar->buffer, uar->header.size, 1, stream) != 1)
+    if (fwrite (uar->buffer, 1, uar->header.size, stream) != uar->header.size)
         {
             uar_set_error (uar, UAR_IO_ERROR);
             fclose (stream);
@@ -657,7 +701,9 @@ uar_write (struct uar_archive *uar, const char *filename)
 const char *
 uar_get_file_name (const struct uar_file *file)
 {
-    return file->name;
+    return file->name[0] == UAR_ROOT_DIR_NAME
+               ? file->namelen == 1 ? "/" : file->name + 1
+               : file->name;
 }
 
 bool
@@ -677,11 +723,16 @@ uar_extract (struct uar_archive *uar, const char *cwd,
             if (callback != NULL && !callback (file))
                 return false;
 
+            char *name = file->name;
+
+            if (name[0] == UAR_ROOT_DIR_NAME)
+                name += 2;
+
             switch (file->type)
                 {
                 case UF_FILE:
                     {
-                        FILE *stream = fopen (file->name, "wb");
+                        FILE *stream = fopen (name, "wb");
 
                         if (stream == NULL)
                             {
@@ -703,7 +754,11 @@ uar_extract (struct uar_archive *uar, const char *cwd,
                     break;
 
                 case UF_DIR:
-                    if (mkdir (file->name, file->mode) != 0)
+                    if (file->namelen == 1
+                        && file->name[0] == UAR_ROOT_DIR_NAME)
+                        continue;
+
+                    if (mkdir (name, file->mode) != 0)
                         {
                             uar_set_error (uar, UAR_SYSTEM_ERROR);
                             return false;

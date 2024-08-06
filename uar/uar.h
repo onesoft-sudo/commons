@@ -24,7 +24,7 @@ struct uar_archive *uar_open (const char *filename);
 bool uar_has_error (const struct uar_archive *restrict uar);
 void uar_close (struct uar_archive *uar);
 const char *uar_strerror (const struct uar_archive *restrict uar);
-struct uar_archive *uar_create ();
+struct uar_archive *uar_create (void);
 struct uar_file *uar_add_file (struct uar_archive *restrict uar,
                                const char *name, const char *path);
 void uar_file_set_mode (struct uar_file *file, mode_t mode);

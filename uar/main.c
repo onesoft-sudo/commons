@@ -254,8 +254,8 @@ create_archive (void)
 
                     if (file == NULL)
                         {
-                            perr ("failed to add directory: %s\n",
-                                  strerror (errno));
+                            perr ("failed to add directory: %s (%s)\n",
+                                  strerror (errno), uar_strerror (uar));
                             uar_close (uar);
                             return;
                         }
@@ -396,7 +396,7 @@ main (int argc, char **argv)
 
                     if (params.file == NULL)
                         {
-                            perr ("failed to read '%s': %s", file,
+                            perr ("failed to read '%s': %s\n", file,
                                   strerror (errno));
                             exit (1);
                         }
@@ -414,8 +414,8 @@ main (int argc, char **argv)
 
             if (params.cwd == NULL)
                 {
-                    perr ("failed to change working directory to '%s': %s", dir,
-                          strerror (errno));
+                    perr ("failed to change working directory to '%s': %s\n",
+                          dir, strerror (errno));
                     exit (1);
                 }
         }

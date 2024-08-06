@@ -1,3 +1,4 @@
 * TODOs
 
 + =uar.c=: add better syscall errno handling; store current errno locally in the available =struct uar *=.
++ =uar.c=: path checks and validation; memory checks to prevent security vulnerabilities.

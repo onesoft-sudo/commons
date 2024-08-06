@@ -133,6 +133,7 @@ show_version (void)
     printf ("Written by Ar Rakin <rakinar2@onesoftnet.eu.org>\n");
 }
 
+#ifndef NDEBUG
 /* Print a debug message. */
 static void
 pdebug (char const *file, int line, char const *format, ...)
@@ -146,6 +147,7 @@ pdebug (char const *file, int line, char const *format, ...)
     vfprintf (stderr, format, args);
     va_end (args);
 }
+#endif
 
 /* Print a message. */
 static void
@@ -197,6 +199,20 @@ initialize (char *argv0)
         progname = argv0;
 }
 
+static bool
+create_archive_callback (struct uar_file *file,
+                         const char *fullname __attribute__ ((unused)),
+                         const char *fullpath __attribute__ ((unused)))
+{
+    enum uar_file_type type = uar_get_entry_type (file);
+    pinfo ("adding %s: %s\n",
+           type == UF_FILE  ? "file"
+           : type == UF_DIR ? "directory"
+                            : "link",
+           uar_get_file_name (file));
+    return true;
+}
+
 /* Create an archive. */
 static void
 create_archive (void)
@@ -246,11 +262,10 @@ create_archive (void)
                 }
             else if (S_ISDIR (stinfo.st_mode))
                 {
-                    pinfo ("adding directory: %s\n",
-                           params.params.create.targets[i]);
                     file = uar_add_dir (
                         uar, basename (params.params.create.targets[i]),
-                        params.params.create.targets[i]);
+                        params.params.create.targets[i],
+                        &create_archive_callback);
 
                     if (file == NULL)
                         {

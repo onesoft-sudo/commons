@@ -38,13 +38,6 @@ struct uar_header
     uint64_t size;
 } __attribute__ ((packed));
 
-enum uar_file_type
-{
-    UF_FILE,
-    UF_DIR,
-    UF_LINK,
-};
-
 struct uar_file
 {
     enum uar_file_type type;
@@ -433,7 +426,9 @@ path_concat (const char *p1, const char *p2, size_t len1, size_t len2)
 }
 
 struct uar_file *
-uar_add_dir (struct uar_archive *uar, const char *dname, const char *path)
+uar_add_dir (struct uar_archive *uar, const char *dname, const char *path,
+             bool (*callback) (struct uar_file *file, const char *fullname,
+                               const char *fullpath))
 {
     assert (uar != NULL && "uar is NULL");
     assert (dname != NULL && "dname is NULL");
@@ -474,6 +469,15 @@ uar_add_dir (struct uar_archive *uar, const char *dname, const char *path)
     struct uar_file *dir_file
         = uar_file_create (name, namelen, 0, uar->header.size);
     uint64_t dir_size = 0;
+
+    dir_file->type = UF_DIR;
+
+    if (callback != NULL && !callback (dir_file, name, path))
+        {
+            uar_set_error (uar, UAR_SUCCESS);
+            uar_file_destroy (dir_file);
+            return NULL;
+        }
 
     if (!uar_add_file_entry (uar, dir_file))
         {
@@ -523,13 +527,20 @@ uar_add_dir (struct uar_archive *uar, const char *dname, const char *path)
                             goto uar_add_dir_error;
                         }
 
+                    if (callback != NULL
+                        && !callback (file, fullname, fullpath))
+                        {
+                            uar_set_error (uar, UAR_SUCCESS);
+                            goto uar_add_dir_error;
+                        }
+
                     file->mode = stinfo.st_mode & 07777;
                     dir_size += file->data.size;
                 }
             else if (S_ISDIR (stinfo.st_mode))
                 {
                     struct uar_file *direntry
-                        = uar_add_dir (uar, fullname, fullpath);
+                        = uar_add_dir (uar, fullname, fullpath, callback);
 
                     if (direntry == NULL)
                         {
@@ -556,7 +567,6 @@ uar_add_dir (struct uar_archive *uar, const char *dname, const char *path)
             goto uar_add_dir_end;
         }
 
-    dir_file->type = UF_DIR;
     dir_file->data.size = dir_size;
 
 uar_add_dir_end:
@@ -704,6 +714,12 @@ uar_get_file_name (const struct uar_file *file)
     return file->name[0] == UAR_ROOT_DIR_NAME
                ? file->namelen == 1 ? "/" : file->name + 1
                : file->name;
+}
+
+enum uar_file_type
+uar_get_entry_type (const struct uar_file *file)
+{
+    return file->type;
 }
 
 bool

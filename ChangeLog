@@ -1,4 +1,24 @@
+07-07-2024  Ar Rakin <rakinar2@onesoftnet.eu.org>
+
+        refactor(uar): better I/O strategies to decrease memory usage
+
+        feat(uar): add listing support
+
+06-07-2024  Ar Rakin <rakinar2@onesoftnet.eu.org>
+
+        chore: update todos
+
+        fix(uar): io logging
+
+        chore: fixup files
+
+        chore: update readme
+
+        fix(uar): memory corruption issues and segmentation faults
+
 05-07-2024  Ar Rakin <rakinar2@onesoftnet.eu.org>
+
+        chore: update changelog
 
         feat: add programs implementing the universal archive format
 

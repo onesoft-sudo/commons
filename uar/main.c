@@ -25,6 +25,7 @@
 #include <errno.h>
 #include <getopt.h>
 #include <libgen.h>
+#include <limits.h>
 #include <math.h>
 #include <stdarg.h>
 #include <stdbool.h>
@@ -34,6 +35,7 @@
 #include <strings.h>
 #include <sys/stat.h>
 #include <time.h>
+#include <unistd.h>
 
 #include "uar.h"
 #include "xmalloc.h"
@@ -87,14 +89,9 @@ struct uar_params
     bool hr_sizes;
     char *file;
     char *cwd;
-    union
-    {
-        struct
-        {
-            char **targets;
-            size_t ntargets;
-        } create;
-    } params;
+    char **targets;
+    char **rtargets;
+    size_t ntargets;
 };
 
 static struct uar_params params = { 0 };
@@ -181,11 +178,11 @@ perr (char const *format, ...)
 static void
 cleanup ()
 {
-    for (size_t i = 0; i < params.params.create.ntargets; i++)
-        free (params.params.create.targets[i]);
+    for (size_t i = 0; i < params.ntargets; i++)
+        free (params.targets[i]);
 
-    if (params.params.create.targets != NULL)
-        free (params.params.create.targets);
+    if (params.targets != NULL)
+        free (params.targets);
 
     if (params.cwd != NULL)
         free (params.cwd);
@@ -208,17 +205,16 @@ initialize (char *argv0)
         progname = argv0;
 }
 
-static bool
-create_archive_callback (struct uar_file *file,
+static bool __attribute__ ((unused))
+create_archive_callback (struct uar_archive *uar __attribute__ ((unused)),
+                         struct uar_file *file __attribute__ ((unused)),
                          const char *fullname __attribute__ ((unused)),
-                         const char *fullpath __attribute__ ((unused)))
+                         const char *fullpath)
 {
-    enum uar_file_type type = uar_file_get_type (file);
-    pinfo ("adding %s: %s\n",
-           type == UF_FILE  ? "file"
-           : type == UF_DIR ? "directory"
-                            : "link",
-           uar_file_get_name (file));
+    if (!params.verbose)
+        return true;
+
+    fprintf (stdout, "%s\n", fullpath);
     return true;
 }
 
@@ -227,94 +223,52 @@ static void
 create_archive (void)
 {
     assert (params.mode == MODE_CREATE);
-    assert (params.params.create.ntargets > 0);
-    assert (params.params.create.targets != NULL);
+    assert (params.ntargets > 0);
+    assert (params.targets != NULL);
 
-    pinfo ("creating archive: %s\n", params.file);
+    if (params.verbose)
+        pinfo ("creating archive: %s\n", params.file);
 
-    struct uar_archive *uar = uar_create ();
+    struct uar_archive *uar = uar_create_stream ();
 
-    if (uar == NULL || uar_has_error (uar))
+    if (uar == NULL)
         {
             pinfo ("failed to create archive: %s\n", strerror (errno));
             return;
         }
 
-    for (size_t i = 0; i < params.params.create.ntargets; i++)
+    for (size_t i = 0; i < params.ntargets; i++)
         {
             struct stat stinfo = { 0 };
 
-            if (stat (params.params.create.targets[i], &stinfo) != 0)
+            if (stat (params.targets[i], &stinfo) != 0)
                 {
-                    perr ("cannot stat '%s': %s\n",
-                          params.params.create.targets[i], strerror (errno));
+                    perr ("cannot stat '%s': %s\n", params.targets[i],
+                          strerror (errno));
                     uar_close (uar);
                     return;
                 }
 
-            struct uar_file *file = NULL;
+            struct uar_file *file = uar_stream_add_entry (
+                uar, basename (params.rtargets[i]), params.rtargets[i], &stinfo,
+                &create_archive_callback);
 
-            if (S_ISREG (stinfo.st_mode))
+            if (file == NULL || uar_has_error (uar))
                 {
-                    pinfo ("adding file: %s\n",
-                           params.params.create.targets[i]);
-                    file = uar_add_file (
-                        uar, basename (params.params.create.targets[i]),
-                        params.params.create.targets[i], &stinfo);
-
-                    if (file == NULL)
-                        {
-                            perr ("failed to add file: %s\n", strerror (errno));
-                            uar_close (uar);
-                            return;
-                        }
+                    const char *error_file = uar_get_error_file (uar);
+                    perr ("failed to add '%s': %s\n",
+                          error_file == NULL ? params.targets[i] : error_file,
+                          uar_strerror (uar));
+                    exit (1);
                 }
-            else if (S_ISDIR (stinfo.st_mode))
-                {
-                    file = uar_add_dir (
-                        uar,
-                        params.params.create.targets[i][0] == '/'
-                                || strncmp (params.params.create.targets[i],
-                                            ".", 1)
-                                       == 0
-                                || strncmp (params.params.create.targets[i],
-                                            "..", 2)
-                                       == 0
-                            ? UAR_ROOT_DIR_NAME
-                            : basename (params.params.create.targets[i]),
-                        params.params.create.targets[i],
-                        &create_archive_callback);
-
-                    if (file == NULL)
-                        {
-                            perr ("failed to add directory: %s (%s)\n",
-                                  strerror (errno), uar_strerror (uar));
-                            uar_close (uar);
-                            return;
-                        }
-                }
-            else if (S_ISLNK (stinfo.st_mode))
-                {
-                    assert (false && "Not implemented");
-                }
-            else
-                {
-                    perr ("failed to add file: %s: file type not supported\n",
-                          params.params.create.targets[i]);
-                    uar_close (uar);
-                    return;
-                }
-
-            assert (file != NULL);
-            uar_file_set_mode (file, stinfo.st_mode & 07777);
         }
 
-    pinfo ("writing archive: %s\n", params.file);
-
-    if (!uar_write (uar, params.file))
+    if (!uar_stream_write (uar, params.file))
         {
-            perr ("failed to write archive: %s\n", strerror (errno));
-            uar_close (uar);
+            const char *error_file = uar_get_error_file (uar);
+            pinfo ("failed to write archive: %s%s%s\n",
+                   error_file == NULL ? "" : error_file,
+                   error_file == NULL ? "" : ": ", uar_strerror (uar));
             return;
         }
 
@@ -652,6 +606,12 @@ main (int argc, char **argv)
     switch (params.mode)
         {
         case MODE_CREATE:
+            if (params.file == NULL)
+                {
+                    perr ("no archive file name specified\n");
+                    exit (1);
+                }
+
             for (int i = optind; i < argc; i++)
                 {
                     char *path = realpath (argv[i], NULL);
@@ -663,23 +623,18 @@ main (int argc, char **argv)
                             exit (1);
                         }
 
-                    params.params.create.targets = xrealloc (
-                        params.params.create.targets,
-                        (params.params.create.ntargets + 1) * sizeof (char *));
-                    params.params.create.targets[params.params.create.ntargets]
-                        = path;
-                    params.params.create.ntargets++;
+                    params.targets
+                        = xrealloc (params.targets,
+                                    (params.ntargets + 1) * sizeof (char *));
+                    params.targets[params.ntargets] = path;
+                    params.ntargets++;
                 }
 
-            if (params.params.create.ntargets == 0)
+            params.rtargets = argv + optind;
+
+            if (params.ntargets == 0)
                 {
                     perr ("no files or directories specified\n");
-                    exit (1);
-                }
-
-            if (params.file == NULL)
-                {
-                    perr ("no archive file name specified\n");
                     exit (1);
                 }
 

@@ -25,12 +25,15 @@
 #include <errno.h>
 #include <getopt.h>
 #include <libgen.h>
+#include <math.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/stat.h>
+#include <time.h>
 
 #include "uar.h"
 #include "xmalloc.h"
@@ -51,18 +54,19 @@
 
 /* Command line options. */
 static struct option const long_options[] = {
-    { "create",    no_argument,       NULL, 'c' },
-    { "extract",   no_argument,       NULL, 'x' },
-    { "list",      no_argument,       NULL, 't' },
-    { "verbose",   no_argument,       NULL, 'v' },
-    { "file",      required_argument, NULL, 'f' },
-    { "directory", required_argument, NULL, 'C' },
-    { "help",      no_argument,       NULL, 'h' },
-    { "version",   no_argument,       NULL, 'V' },
-    { NULL,        0,                 NULL, 0   },
+    { "create",         no_argument,       NULL, 'c' },
+    { "extract",        no_argument,       NULL, 'x' },
+    { "human-readable", no_argument,       NULL, 'm' },
+    { "list",           no_argument,       NULL, 't' },
+    { "verbose",        no_argument,       NULL, 'v' },
+    { "file",           required_argument, NULL, 'f' },
+    { "directory",      required_argument, NULL, 'C' },
+    { "help",           no_argument,       NULL, 'h' },
+    { "version",        no_argument,       NULL, 'V' },
+    { NULL,             0,                 NULL, 0   },
 };
 
-static char const short_options[] = "cxtvf:C:hV";
+static char const short_options[] = "cxtvmf:C:hV";
 
 /* Program name. */
 static char *progname = NULL;
@@ -70,7 +74,7 @@ static char *progname = NULL;
 /* Flags for the command line options. */
 enum uar_mode
 {
-    MODE_NONE,
+    MODE_NONE = 0,
     MODE_CREATE,
     MODE_EXTRACT,
     MODE_LIST
@@ -80,6 +84,7 @@ struct uar_params
 {
     enum uar_mode mode;
     bool verbose;
+    bool hr_sizes;
     char *file;
     char *cwd;
     union
@@ -107,6 +112,7 @@ usage (void)
     printf ("  -c, --create            Create a new archive\n");
     printf ("  -x, --extract           Extract files from an archive\n");
     printf ("  -t, --list              List the contents of an archive\n");
+    printf ("  -m, --human-readable    Print human-readable sizes\n");
     printf ("  -v, --verbose           Verbose mode\n");
     printf (
         "  -f, --file=ARCHIVE      Use archive file or directory ARCHIVE\n");
@@ -175,6 +181,9 @@ perr (char const *format, ...)
 static void
 cleanup ()
 {
+    for (size_t i = 0; i < params.params.create.ntargets; i++)
+        free (params.params.create.targets[i]);
+
     if (params.params.create.targets != NULL)
         free (params.params.create.targets);
 
@@ -204,12 +213,12 @@ create_archive_callback (struct uar_file *file,
                          const char *fullname __attribute__ ((unused)),
                          const char *fullpath __attribute__ ((unused)))
 {
-    enum uar_file_type type = uar_get_entry_type (file);
+    enum uar_file_type type = uar_file_get_type (file);
     pinfo ("adding %s: %s\n",
            type == UF_FILE  ? "file"
            : type == UF_DIR ? "directory"
                             : "link",
-           uar_get_file_name (file));
+           uar_file_get_name (file));
     return true;
 }
 
@@ -251,7 +260,7 @@ create_archive (void)
                            params.params.create.targets[i]);
                     file = uar_add_file (
                         uar, basename (params.params.create.targets[i]),
-                        params.params.create.targets[i]);
+                        params.params.create.targets[i], &stinfo);
 
                     if (file == NULL)
                         {
@@ -263,7 +272,16 @@ create_archive (void)
             else if (S_ISDIR (stinfo.st_mode))
                 {
                     file = uar_add_dir (
-                        uar, basename (params.params.create.targets[i]),
+                        uar,
+                        params.params.create.targets[i][0] == '/'
+                                || strncmp (params.params.create.targets[i],
+                                            ".", 1)
+                                       == 0
+                                || strncmp (params.params.create.targets[i],
+                                            "..", 2)
+                                       == 0
+                            ? UAR_ROOT_DIR_NAME
+                            : basename (params.params.create.targets[i]),
                         params.params.create.targets[i],
                         &create_archive_callback);
 
@@ -310,13 +328,13 @@ create_archive (void)
 static bool
 extract_archive_callback (struct uar_file *file)
 {
-    pinfo ("extracting: %s\n", uar_get_file_name (file));
+    pinfo ("extracting: %s\n", uar_file_get_name (file));
     return true;
 }
 
 /* Extract an archive. */
 static void
-extract_archive ()
+extract_archive (void)
 {
     assert (params.mode == MODE_EXTRACT);
 
@@ -343,6 +361,173 @@ extract_archive ()
     uar_close (uar);
 }
 
+static const char *
+stringify_mode (mode_t mode)
+{
+    static char str[11];
+
+    str[0] = S_ISDIR (mode) ? 'd' : S_ISLNK (mode) ? 'l' : '-';
+
+    for (int i = 1; i < 10; i++)
+        str[i] = mode & (1 << (9 - i)) ? "rwxrwxrwx"[i - 1] : '-';
+
+    return str;
+}
+
+static int
+count_dec_numlen (uint64_t num)
+{
+    int len = 0;
+
+    do
+        {
+            num /= 10;
+            len++;
+        }
+    while (num > 0);
+
+    return len;
+}
+
+static char *
+format_iec_size (uint64_t size)
+{
+    static char buf[32] = { 0 };
+    const char suffix[] = { ' ', 'K', 'M', 'G', 'T', 'P', 'E', 'Z', 'Y' };
+    size_t i = 0;
+    long double computed = size;
+
+    while (computed > 1024 && i < sizeof (suffix) / sizeof (suffix[0]))
+        {
+            computed /= 1024;
+            i++;
+        }
+
+    snprintf (buf, sizeof (buf), "%.02Lf%c", computed, suffix[i]);
+    return buf;
+}
+
+struct archive_file_info
+{
+    mode_t mode;
+    const char *name;
+    time_t mtime;
+    union
+    {
+
+        uint64_t bytes;
+        char str[64];
+    } size;
+};
+
+struct archive_file_table
+{
+    struct archive_file_info *files;
+    size_t nfiles;
+    int widths[1];
+};
+
+#define TABLE_WIDTH_SIZE 1
+
+static bool
+list_archive_callback_analyze (struct uar_file *file, void *data)
+{
+    struct archive_file_table *table = (struct archive_file_table *) data;
+    struct archive_file_info info = { 0 };
+
+    mode_t mode = uar_file_get_mode (file);
+    const char *name = uar_file_get_name (file);
+    uint64_t size = uar_file_get_size (file);
+    int size_len = 0;
+
+    info.mode = mode;
+    info.name = name;
+    info.mtime = uar_file_get_mtime (file);
+
+    if (params.hr_sizes)
+        {
+            char *str = format_iec_size (size);
+            size_len = strlen (str);
+            strncpy (info.size.str, str, 32);
+        }
+    else
+        {
+            info.size.bytes = size;
+            size_len = count_dec_numlen (size);
+        }
+
+    if (size_len > table->widths[TABLE_WIDTH_SIZE])
+        table->widths[TABLE_WIDTH_SIZE] = size_len;
+
+    table->files[table->nfiles++] = info;
+    return true;
+}
+
+static void
+list_archive (void)
+{
+    assert (params.mode == MODE_LIST);
+    struct archive_file_table *table = NULL;
+    struct uar_archive *uar = uar_open (params.file);
+
+    if (uar == NULL || uar_has_error (uar))
+        {
+            pinfo ("failed to open archive: %s\n", strerror (errno));
+            goto list_archive_end;
+        }
+
+    uint64_t nfiles = uar_get_file_count (uar);
+
+    table = xcalloc (1, sizeof (struct archive_file_table));
+    table->files = xcalloc (nfiles, sizeof (struct archive_file_info));
+    table->nfiles = 0;
+
+    if (!uar_iterate (uar, &list_archive_callback_analyze, (void *) table))
+        {
+            pinfo ("failed to read archive: %s\n", strerror (errno));
+            goto list_archive_end;
+        }
+
+    for (size_t i = 0; i < nfiles; i++)
+        {
+            struct archive_file_info info = table->files[i];
+            struct tm *tm = localtime (&info.mtime);
+            char mtime_str[10] = "none";
+            const char *mode_str = stringify_mode (info.mode);
+
+            if (tm == NULL)
+                {
+                    fprintf (stderr,
+                             "%s: warning: failed to convert time: %s\n",
+                             progname, strerror (errno));
+                }
+            else
+                {
+                    strftime (mtime_str, sizeof (mtime_str), "%b %d", tm);
+                }
+
+            if (params.hr_sizes)
+                {
+
+                    fprintf (stdout, "%s %*s %s %s\n", mode_str,
+                             table->widths[TABLE_WIDTH_SIZE], info.size.str,
+                             mtime_str, info.name);
+                }
+            else
+                {
+
+                    fprintf (stdout, "%s %*lu %s %s\n", mode_str,
+                             table->widths[TABLE_WIDTH_SIZE], info.size.bytes,
+                             mtime_str, info.name);
+                }
+        }
+
+list_archive_end:
+    free (table->files);
+    free (table);
+    uar_close (uar);
+}
+
 int
 main (int argc, char **argv)
 {
@@ -356,6 +541,13 @@ main (int argc, char **argv)
 
             if (opt == -1)
                 break;
+
+            if ((opt == 'c' || opt == 'x' || opt == 't')
+                && params.mode != MODE_NONE)
+                {
+                    perr ("only one mode can be specified\n");
+                    exit (1);
+                }
 
             switch (opt)
                 {
@@ -376,6 +568,10 @@ main (int argc, char **argv)
                     debug ("Verbose mode enabled\n", progname);
                     break;
 
+                case 'm':
+                    params.hr_sizes = true;
+                    break;
+
                 case 'f':
                     params.file = optarg;
                     break;
@@ -393,10 +589,9 @@ main (int argc, char **argv)
                     exit (0);
 
                 case '?':
-                    usage ();
-                    exit (1);
-
                 default:
+                    debug ("Unknown/Unhandled option: %c\n", opt);
+                    bzero (&params, sizeof (params));
                     exit (1);
                 }
         }
@@ -424,6 +619,14 @@ main (int argc, char **argv)
 
     if (params.cwd != NULL)
         {
+            if (params.mode == MODE_LIST)
+                {
+                    params.cwd = NULL;
+                    perr ("option '-C' or '--directory' does not make sense in "
+                          "list mode\n");
+                    exit (1);
+                }
+
             char *dir = params.cwd;
             params.cwd = realpath (dir, NULL);
 
@@ -451,23 +654,56 @@ main (int argc, char **argv)
         case MODE_CREATE:
             for (int i = optind; i < argc; i++)
                 {
+                    char *path = realpath (argv[i], NULL);
+
+                    if (path == NULL)
+                        {
+                            perr ("failed to read '%s': %s\n", argv[i],
+                                  strerror (errno));
+                            exit (1);
+                        }
+
                     params.params.create.targets = xrealloc (
                         params.params.create.targets,
                         (params.params.create.ntargets + 1) * sizeof (char *));
                     params.params.create.targets[params.params.create.ntargets]
-                        = argv[i];
+                        = path;
                     params.params.create.ntargets++;
+                }
+
+            if (params.params.create.ntargets == 0)
+                {
+                    perr ("no files or directories specified\n");
+                    exit (1);
+                }
+
+            if (params.file == NULL)
+                {
+                    perr ("no archive file name specified\n");
+                    exit (1);
                 }
 
             create_archive ();
             break;
 
         case MODE_EXTRACT:
+            if (params.file == NULL)
+                {
+                    perr ("no archive file specified\n");
+                    exit (1);
+                }
+
             extract_archive ();
             break;
 
         case MODE_LIST:
-            assert (false && "Not implemented yet");
+            if (params.file == NULL)
+                {
+                    perr ("no archive file specified\n");
+                    exit (1);
+                }
+
+            list_archive ();
             break;
 
         default:

@@ -1,10 +1,24 @@
-07-07-2024  Ar Rakin <rakinar2@onesoftnet.eu.org>
+08-08-2024  Ar Rakin <rakinar2@onesoftnet.eu.org>
+
+        chore: update .clang-format
+
+        feat(uar): better content listing; including owner and group info
+
+        chore: update todos
+
+        fix(genchangelog): unexpected zero based month numbers
+
+        fix(uar): better error messages during archive creation
+
+07-08-2024  Ar Rakin <rakinar2@onesoftnet.eu.org>
+
+        chore: update changelog
 
         refactor(uar): better I/O strategies to decrease memory usage
 
         feat(uar): add listing support
 
-06-07-2024  Ar Rakin <rakinar2@onesoftnet.eu.org>
+06-08-2024  Ar Rakin <rakinar2@onesoftnet.eu.org>
 
         chore: update todos
 
@@ -16,13 +30,13 @@
 
         fix(uar): memory corruption issues and segmentation faults
 
-05-07-2024  Ar Rakin <rakinar2@onesoftnet.eu.org>
+05-08-2024  Ar Rakin <rakinar2@onesoftnet.eu.org>
 
         chore: update changelog
 
         feat: add programs implementing the universal archive format
 
-04-07-2024  Ar Rakin <rakinar2@onesoftnet.eu.org>
+04-08-2024  Ar Rakin <rakinar2@onesoftnet.eu.org>
 
         fix(mkdist): incorrect root directory name for created tarballs
 
@@ -34,7 +48,7 @@
 
         style: reformat files
 
-03-07-2024  Ar Rakin <rakinar2@onesoftnet.eu.org>
+03-08-2024  Ar Rakin <rakinar2@onesoftnet.eu.org>
 
         chore: add changelog
 
@@ -48,21 +62,21 @@
 
         fix: correct bug report email
 
-02-07-2024  Ar Rakin <rakinar2@onesoftnet.eu.org>
+02-08-2024  Ar Rakin <rakinar2@onesoftnet.eu.org>
 
         feat(dist:distupload): generate gpg signature of files being uploaded
 
-01-07-2024  Ar Rakin <rakinar2@onesoftnet.eu.org>
+01-08-2024  Ar Rakin <rakinar2@onesoftnet.eu.org>
 
         feat: add distupload helper script
 
         chore: add gitignore
 
-28-06-2024  Ar Rakin <68149013+virtual-designer@users.noreply.github.com>
+28-07-2024  Ar Rakin <68149013+virtual-designer@users.noreply.github.com>
 
         chore: update README.org
 
-28-06-2024  Ar Rakin <rakinar2@onesoftnet.eu.org>
+28-07-2024  Ar Rakin <rakinar2@onesoftnet.eu.org>
 
         chore: update readme
 

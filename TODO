@@ -2,3 +2,4 @@
 
 + =uar.c=: add better syscall errno handling; store current errno locally in the available =struct uar *=.
 + =uar.c=: path checks and validation; memory checks to prevent security vulnerabilities.
++ =uar.c=: use hash tables to store file information

@@ -30,8 +30,22 @@ enum uar_file_type
     UF_LINK
 };
 
+enum uar_error_level
+{
+    UAR_ELEVEL_NONE,
+    UAR_ELEVEL_ERROR,
+    UAR_ELEVEL_WARNING,
+};
+
 typedef bool (*uar_callback_t) (struct uar_archive *uar, struct uar_file *file,
                                 const char *uar_name, const char *fs_name);
+
+typedef bool (*uar_create_callback_t) (
+    struct uar_archive *uar, struct uar_file *file, const char *uar_name,
+    const char *fs_name, enum uar_error_level level, const char *message);
+
+void uar_set_create_callback (struct uar_archive *uar,
+                              uar_create_callback_t callback);
 
 struct uar_archive *uar_create (void);
 struct uar_archive *uar_open (const char *filename);
@@ -72,13 +86,12 @@ void uar_file_destroy (struct uar_file *file);
 
 struct uar_file *uar_stream_add_entry (struct uar_archive *uar,
                                        const char *uar_name,
-                                       const char *fs_name, struct stat *stinfo,
-                                       uar_callback_t callback);
+                                       const char *fs_name,
+                                       struct stat *stinfo);
 struct uar_file *uar_stream_add_dir (struct uar_archive *uar,
                                      const char *uar_dirname,
                                      const char *fs_dirname,
-                                     struct stat *stinfo,
-                                     uar_callback_t callback);
+                                     struct stat *stinfo);
 
 const char *uar_file_get_name (const struct uar_file *file);
 enum uar_file_type uar_file_get_type (const struct uar_file *file);

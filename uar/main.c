@@ -196,25 +196,29 @@ static void
 initialize (char *argv0)
 {
     atexit (&cleanup);
-
-    progname = strrchr (argv0, '/');
-
-    if (progname != NULL)
-        progname++;
-    else
-        progname = argv0;
+    progname = argv0;
 }
 
-static bool __attribute__ ((unused))
-create_archive_callback (struct uar_archive *uar __attribute__ ((unused)),
+/* Create archive callback. */
+static bool
+create_archive_callback (struct uar_archive *uar,
                          struct uar_file *file __attribute__ ((unused)),
-                         const char *fullname __attribute__ ((unused)),
-                         const char *fullpath)
+                         const char *uar_name __attribute__ ((unused)),
+                         const char *fs_name, enum uar_error_level level,
+                         const char *message)
 {
-    if (!params.verbose)
-        return true;
+    if (level == UAR_ELEVEL_NONE)
+        {
+            if (params.verbose)
+                fprintf (stdout, "%s\n", fs_name);
+        }
+    else if (level == UAR_ELEVEL_WARNING)
+        perr ("warning: %s: %s\n", fs_name,
+              message != NULL ? message : uar_strerror (uar));
+    else if (level == UAR_ELEVEL_ERROR)
+        perr ("error: %s: %s\n", fs_name,
+              message != NULL ? message : uar_strerror (uar));
 
-    fprintf (stdout, "%s\n", fullpath);
     return true;
 }
 
@@ -237,6 +241,8 @@ create_archive (void)
             return;
         }
 
+    uar_set_create_callback (uar, &create_archive_callback);
+
     for (size_t i = 0; i < params.ntargets; i++)
         {
             struct stat stinfo = { 0 };
@@ -249,9 +255,9 @@ create_archive (void)
                     return;
                 }
 
-            struct uar_file *file = uar_stream_add_entry (
-                uar, basename (params.rtargets[i]), params.rtargets[i], &stinfo,
-                &create_archive_callback);
+            struct uar_file *file
+                = uar_stream_add_entry (uar, basename (params.rtargets[i]),
+                                        params.rtargets[i], &stinfo);
 
             if (file == NULL || uar_has_error (uar))
                 {

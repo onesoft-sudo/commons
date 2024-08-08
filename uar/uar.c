@@ -37,10 +37,10 @@ struct uar_header
     uint64_t size;
 } __attribute__ ((packed));
 
+/* TODO: Fix alignment */
 struct uar_file
 {
     enum uar_file_type type;
-    int __pad1;
     char *name;
     uint64_t namelen;
     uint64_t offset;
@@ -55,7 +55,8 @@ struct uar_file
     } data;
     mode_t mode;
     time_t mtime;
-    int __pad2;
+    uid_t uid;
+    gid_t gid;
 };
 
 struct uar_archive
@@ -69,7 +70,15 @@ struct uar_archive
     FILE *stream;
     int last_errno;
     char *err_file;
+    uar_create_callback_t create_callback;
 };
+
+void
+uar_set_create_callback (struct uar_archive *uar,
+                         uar_create_callback_t callback)
+{
+    uar->create_callback = callback;
+}
 
 static void
 uar_set_error (struct uar_archive *uar, enum uar_error ecode,
@@ -335,7 +344,12 @@ uar_stream_add_file (struct uar_archive *uar, const char *uar_filename,
             if (lstat (fs_filename, &custom_stinfo) != 0)
                 {
                     uar_set_error (uar, UAR_SYSCALL_ERROR, fs_filename);
-                    perror ("uar_stream_add_file::lstat");
+
+                    if (uar->create_callback != NULL)
+                        uar->create_callback (uar, NULL, uar_filename,
+                                              fs_filename, UAR_ELEVEL_WARNING,
+                                              strerror (errno));
+
                     return NULL;
                 }
             else
@@ -347,7 +361,11 @@ uar_stream_add_file (struct uar_archive *uar, const char *uar_filename,
     if (stream == NULL)
         {
             uar_set_error (uar, UAR_SYSCALL_ERROR, fs_filename);
-            perror ("uar_stream_add_file::fopen");
+
+            if (uar->create_callback != NULL)
+                uar->create_callback (uar, NULL, uar_filename, fs_filename,
+                                      UAR_ELEVEL_WARNING, strerror (errno));
+
             return NULL;
         }
 
@@ -367,7 +385,6 @@ uar_stream_add_file (struct uar_archive *uar, const char *uar_filename,
     if (file == NULL)
         {
             ecode = UAR_SYSCALL_ERROR;
-            perror ("uar_stream_add_file::uar_file_create");
             goto uar_stream_add_file_end;
         }
 
@@ -379,7 +396,6 @@ uar_stream_add_file (struct uar_archive *uar, const char *uar_filename,
 
     if (!uar_add_file_entry (uar, file))
         {
-            perror ("uar_stream_add_file::uar_add_file_entry");
             uar_file_destroy (file);
             fclose (stream);
             return NULL;
@@ -405,6 +421,12 @@ uar_stream_add_file (struct uar_archive *uar, const char *uar_filename,
             goto uar_stream_add_file_end;
         }
 
+    if (ecode == UAR_SUCCESS && uar->create_callback != NULL)
+        {
+            uar->create_callback (uar, file, uar_filename, fs_filename,
+                                  UAR_ELEVEL_NONE, NULL);
+        }
+
 uar_stream_add_file_end:
     if (ecode != UAR_SUCCESS && file != NULL)
         uar_file_destroy (file);
@@ -419,8 +441,7 @@ uar_stream_add_file_end:
 
 struct uar_file *
 uar_stream_add_dir (struct uar_archive *uar, const char *uar_dirname,
-                    const char *fs_dirname, struct stat *stinfo,
-                    uar_callback_t callback)
+                    const char *fs_dirname, struct stat *stinfo)
 {
     struct stat custom_stinfo = { 0 };
     enum uar_error ecode = UAR_SUCCESS;
@@ -433,6 +454,12 @@ uar_stream_add_dir (struct uar_archive *uar, const char *uar_dirname,
             if (lstat (fs_dirname, &custom_stinfo) != 0)
                 {
                     uar_set_error (uar, UAR_SYSCALL_ERROR, fs_dirname);
+
+                    if (uar->create_callback != NULL)
+                        uar->create_callback (uar, NULL, uar_dirname,
+                                              fs_dirname, UAR_ELEVEL_WARNING,
+                                              strerror (errno));
+
                     return NULL;
                 }
             else
@@ -457,16 +484,14 @@ uar_stream_add_dir (struct uar_archive *uar, const char *uar_dirname,
             goto uar_stream_add_dir_error;
         }
 
-    if (!callback (uar, file, uar_dirname, fs_dirname))
-        {
-            ecode = UAR_SUCCESS;
-            goto uar_stream_add_dir_error;
-        }
-
     dir = opendir (fs_dirname);
 
     if (dir == NULL)
         {
+            if (uar->create_callback != NULL)
+                uar->create_callback (uar, NULL, uar_dirname, fs_dirname,
+                                      UAR_ELEVEL_WARNING, strerror (errno));
+
             ecode = UAR_SYSCALL_ERROR;
             goto uar_stream_add_dir_error;
         }
@@ -485,22 +510,25 @@ uar_stream_add_dir (struct uar_archive *uar, const char *uar_dirname,
             char *uar_fullpath = path_concat (uar_dirname, entry->d_name,
                                               strlen (uar_dirname), dname_len);
 
-            struct uar_file *entry_file = uar_stream_add_entry (
-                uar, uar_fullpath, fs_fullpath, NULL, callback);
+            struct uar_file *entry_file
+                = uar_stream_add_entry (uar, uar_fullpath, fs_fullpath, NULL);
 
-            if (entry_file == NULL)
-                {
-                    ecode = UAR_SYSCALL_ERROR;
-                    goto uar_stream_add_dir_ret;
-                }
+            if (entry_file != NULL)
+                size += entry_file->data.size;
 
-            size += entry_file->data.size;
             free (fs_fullpath);
             free (uar_fullpath);
         }
 
     file->data.size = size;
 
+    if (ecode == UAR_SUCCESS && uar->create_callback != NULL)
+        {
+            uar->create_callback (uar, file, uar_dirname, fs_dirname,
+                                  UAR_ELEVEL_NONE, NULL);
+        }
+
+    goto uar_stream_add_dir_ret;
 uar_stream_add_dir_error:
     uar_set_error (uar, ecode, fs_dirname);
 uar_stream_add_dir_ret:
@@ -525,6 +553,12 @@ uar_stream_add_link (struct uar_archive *uar, const char *uar_name,
             if (lstat (fs_name, &custom_stinfo) != 0)
                 {
                     uar_set_error (uar, UAR_SYSCALL_ERROR, fs_name);
+
+                    if (uar->create_callback != NULL)
+                        uar->create_callback (uar, NULL, uar_name, fs_name,
+                                              UAR_ELEVEL_WARNING,
+                                              strerror (errno));
+
                     return NULL;
                 }
             else
@@ -551,6 +585,11 @@ uar_stream_add_link (struct uar_archive *uar, const char *uar_name,
         {
             uar_set_error (uar, UAR_SYSCALL_ERROR, fs_name);
             uar_file_destroy (file);
+
+            if (uar->create_callback != NULL)
+                uar->create_callback (uar, NULL, uar_name, fs_name,
+                                      UAR_ELEVEL_WARNING, strerror (errno));
+
             return NULL;
         }
 
@@ -573,13 +612,16 @@ uar_stream_add_link (struct uar_archive *uar, const char *uar_name,
             return NULL;
         }
 
+    if (uar->create_callback != NULL && file != NULL)
+        uar->create_callback (uar, file, uar_name, fs_name, UAR_ELEVEL_NONE,
+                              NULL);
+
     return file;
 }
 
 struct uar_file *
 uar_stream_add_entry (struct uar_archive *uar, const char *uar_name,
-                      const char *fs_name, struct stat *stinfo,
-                      uar_callback_t callback)
+                      const char *fs_name, struct stat *stinfo)
 {
     assert (uar != NULL && "uar is NULL");
     assert (uar->is_stream && "uar is not in stream mode");
@@ -608,21 +650,22 @@ uar_stream_add_entry (struct uar_archive *uar, const char *uar_name,
                 {
                     return NULL;
                 }
-
-            if (!callback (uar, file, uar_name, fs_name))
-                {
-                    uar_set_error (uar, UAR_SUCCESS, fs_name);
-                    return NULL;
-                }
         }
     else if (S_ISDIR (stinfo->st_mode))
         {
-            file
-                = uar_stream_add_dir (uar, uar_name, fs_name, stinfo, callback);
+            file = uar_stream_add_dir (uar, uar_name, fs_name, stinfo);
         }
     else
         {
             file = uar_stream_add_link (uar, uar_name, fs_name, stinfo);
+        }
+
+    if (file != NULL)
+        {
+            file->mode = stinfo->st_mode;
+            file->mtime = stinfo->st_mtime;
+            file->uid = stinfo->st_uid;
+            file->gid = stinfo->st_gid;
         }
 
     return file;
@@ -837,6 +880,8 @@ uar_file_create (const char *name, uint64_t namelen, uint64_t size,
     file->type = UF_FILE;
     file->mode = 0644;
     file->mtime = 0;
+    file->uid = 0;
+    file->gid = 0;
     file->name = malloc (namelen + 1);
 
     if (file->name == NULL)

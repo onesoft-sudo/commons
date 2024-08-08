@@ -15,3 +15,5 @@ IndentPPDirectives: AfterHash
 #   AfterFunctionDefinitionName: false
 #   AfterFunctionDeclarationName: false
 #   BeforeNonEmptyParentheses: false
+CommentPragmas: '^'
+AlignEscapedNewlines: false

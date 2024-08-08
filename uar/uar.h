@@ -12,6 +12,8 @@ struct uar_file;
 enum uar_error
 {
     UAR_SUCCESS,
+    UAR_INVALID_ARCHIVE,
+    UAR_UNSUPPORTED_VERSION,
     UAR_INVALID_MAGIC,
     UAR_INVALID_FILE,
     UAR_IO_ERROR,
@@ -20,7 +22,7 @@ enum uar_error
     UAR_INVALID_OPERATION,
     UAR_INVALID_PATH,
     UAR_SYSTEM_ERROR,
-    UAR_SYSCALL_ERROR,
+    UAR_SYSCALL_ERROR
 };
 
 enum uar_file_type
@@ -49,7 +51,8 @@ void uar_set_create_callback (struct uar_archive *uar,
 
 struct uar_archive *uar_create (void);
 struct uar_archive *uar_open (const char *filename);
-struct uar_archive *uar_create_stream (void);
+struct uar_archive *uar_stream_open (const char *filename);
+struct uar_archive *uar_stream_create (void);
 void uar_close (struct uar_archive *uar);
 
 struct uar_file *uar_stream_add_file (struct uar_archive *uar,
@@ -100,6 +103,8 @@ mode_t uar_file_get_mode (const struct uar_file *file);
 void uar_file_set_mode (struct uar_file *file, mode_t mode);
 uint64_t uar_file_get_namelen (const struct uar_file *file);
 time_t uar_file_get_mtime (const struct uar_file *file);
+uid_t uar_file_get_uid (const struct uar_file *file);
+gid_t uar_file_get_gid (const struct uar_file *file);
 const char *uar_get_error_file (const struct uar_archive *uar);
 
 #ifdef UAR_PRINT_VERBOSE_IMPL_INFO

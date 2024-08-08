@@ -24,9 +24,12 @@
 #include <assert.h>
 #include <errno.h>
 #include <getopt.h>
+#include <grp.h>
 #include <libgen.h>
 #include <limits.h>
+#include <linux/limits.h>
 #include <math.h>
+#include <pwd.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -233,7 +236,7 @@ create_archive (void)
     if (params.verbose)
         pinfo ("creating archive: %s\n", params.file);
 
-    struct uar_archive *uar = uar_create_stream ();
+    struct uar_archive *uar = uar_stream_create ();
 
     if (uar == NULL)
         {
@@ -255,9 +258,13 @@ create_archive (void)
                     return;
                 }
 
+            const char *base = basename (params.rtargets[i]);
+
+            if (strcmp (base, ".") == 0 || strcmp (base, "..") == 0)
+                base = basename (params.targets[i]);
+
             struct uar_file *file
-                = uar_stream_add_entry (uar, basename (params.rtargets[i]),
-                                        params.rtargets[i], &stinfo);
+                = uar_stream_add_entry (uar, base, params.rtargets[i], &stinfo);
 
             if (file == NULL || uar_has_error (uar))
                 {
@@ -353,7 +360,7 @@ static char *
 format_iec_size (uint64_t size)
 {
     static char buf[32] = { 0 };
-    const char suffix[] = { ' ', 'K', 'M', 'G', 'T', 'P', 'E', 'Z', 'Y' };
+    const char suffix[] = { 0, 'K', 'M', 'G', 'T', 'P', 'E', 'Z', 'Y' };
     size_t i = 0;
     long double computed = size;
 
@@ -363,14 +370,22 @@ format_iec_size (uint64_t size)
             i++;
         }
 
-    snprintf (buf, sizeof (buf), "%.02Lf%c", computed, suffix[i]);
+    if (computed == 0.00)
+        {
+            snprintf (buf, sizeof (buf), "0%c", suffix[i]);
+            return buf;
+        }
+
+    snprintf (buf, sizeof (buf), "%.2Lf%c", computed, suffix[i]);
     return buf;
 }
 
 struct archive_file_info
 {
-    mode_t mode;
     const char *name;
+    char owner[128];
+    char group[128];
+    mode_t mode;
     time_t mtime;
     union
     {
@@ -384,10 +399,12 @@ struct archive_file_table
 {
     struct archive_file_info *files;
     size_t nfiles;
-    int widths[1];
+    int widths[3];
 };
 
-#define TABLE_WIDTH_SIZE 1
+#define TABLE_WIDTH_SIZE 0
+#define TABLE_WIDTH_OWNER 1
+#define TABLE_WIDTH_GROUP 2
 
 static bool
 list_archive_callback_analyze (struct uar_file *file, void *data)
@@ -404,6 +421,34 @@ list_archive_callback_analyze (struct uar_file *file, void *data)
     info.name = name;
     info.mtime = uar_file_get_mtime (file);
 
+    uid_t uid = uar_file_get_uid (file);
+    gid_t gid = uar_file_get_gid (file);
+
+    struct passwd *pw = getpwuid (uid);
+    struct group *gr = getgrgid (gid);
+
+    if (pw == NULL)
+        {
+            if (params.verbose)
+                perr ("warning: failed to get user info (%i): %s\n", uid,
+                      strerror (errno));
+
+            strncpy (info.owner, "unknown", sizeof (info.owner) - 1);
+        }
+    else
+        strncpy (info.owner, pw->pw_name, sizeof (info.owner) - 1);
+
+    if (gr == NULL)
+        {
+            if (params.verbose)
+                perr ("warning: failed to get group info (%i): %s\n", gid,
+                      strerror (errno));
+
+            strncpy (info.group, "unknown", sizeof (info.group) - 1);
+        }
+    else
+        strncpy (info.group, gr->gr_name, sizeof (info.group) - 1);
+
     if (params.hr_sizes)
         {
             char *str = format_iec_size (size);
@@ -419,6 +464,15 @@ list_archive_callback_analyze (struct uar_file *file, void *data)
     if (size_len > table->widths[TABLE_WIDTH_SIZE])
         table->widths[TABLE_WIDTH_SIZE] = size_len;
 
+    int owner_len = strlen (info.owner);
+    int group_len = strlen (info.group);
+
+    if (owner_len > table->widths[TABLE_WIDTH_OWNER])
+        table->widths[TABLE_WIDTH_OWNER] = owner_len;
+
+    if (group_len > table->widths[TABLE_WIDTH_GROUP])
+        table->widths[TABLE_WIDTH_GROUP] = group_len;
+
     table->files[table->nfiles++] = info;
     return true;
 }
@@ -428,11 +482,17 @@ list_archive (void)
 {
     assert (params.mode == MODE_LIST);
     struct archive_file_table *table = NULL;
-    struct uar_archive *uar = uar_open (params.file);
+    struct uar_archive *uar = uar_stream_open (params.file);
 
-    if (uar == NULL || uar_has_error (uar))
+    if (uar == NULL)
         {
-            pinfo ("failed to open archive: %s\n", strerror (errno));
+            pinfo ("failed to open archive file: %s\n", strerror (errno));
+            goto list_archive_end;
+        }
+
+    if (uar_has_error (uar))
+        {
+            pinfo ("failed to read archive: %s\n", uar_strerror (uar));
             goto list_archive_end;
         }
 
@@ -452,34 +512,31 @@ list_archive (void)
         {
             struct archive_file_info info = table->files[i];
             struct tm *tm = localtime (&info.mtime);
-            char mtime_str[10] = "none";
+            char mtime_str[10] = "never";
             const char *mode_str = stringify_mode (info.mode);
 
             if (tm == NULL)
                 {
-                    fprintf (stderr,
-                             "%s: warning: failed to convert time: %s\n",
-                             progname, strerror (errno));
+                    if (params.verbose)
+                        perr ("warning: failed to convert time: %s\n",
+                              strerror (errno));
                 }
             else
-                {
-                    strftime (mtime_str, sizeof (mtime_str), "%b %d", tm);
-                }
+                strftime (mtime_str, sizeof (mtime_str), "%b %d", tm);
 
             if (params.hr_sizes)
-                {
+                fprintf (stdout, "%s %-*s %-*s %*s %s %s\n", mode_str,
+                         table->widths[TABLE_WIDTH_OWNER], info.owner,
+                         table->widths[TABLE_WIDTH_GROUP], info.group,
+                         table->widths[TABLE_WIDTH_SIZE], info.size.str,
+                         mtime_str, info.name);
 
-                    fprintf (stdout, "%s %*s %s %s\n", mode_str,
-                             table->widths[TABLE_WIDTH_SIZE], info.size.str,
-                             mtime_str, info.name);
-                }
             else
-                {
-
-                    fprintf (stdout, "%s %*lu %s %s\n", mode_str,
-                             table->widths[TABLE_WIDTH_SIZE], info.size.bytes,
-                             mtime_str, info.name);
-                }
+                fprintf (stdout, "%s %-*s %-*s %*lu %s %s\n", mode_str,
+                         table->widths[TABLE_WIDTH_OWNER], info.owner,
+                         table->widths[TABLE_WIDTH_GROUP], info.group,
+                         table->widths[TABLE_WIDTH_SIZE], info.size.bytes,
+                         mtime_str, info.name);
         }
 
 list_archive_end:

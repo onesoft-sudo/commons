@@ -27,6 +27,7 @@
 #endif
 
 const unsigned char UAR_MAGIC[] = { 0x99, 'U', 'A', 'R' };
+const unsigned int UAR_MAX_SUPPORTED_VERSION = 0x01;
 
 struct uar_header
 {
@@ -51,7 +52,7 @@ struct uar_file
         {
             char *loc;
             uint64_t loclen;
-        } linkinfo;
+        } link;
     } data;
     mode_t mode;
     time_t mtime;
@@ -68,6 +69,7 @@ struct uar_archive
     bool is_stream;
     uint8_t *buffer; /* Deprecated */
     FILE *stream;
+    uint64_t stream_size;
     int last_errno;
     char *err_file;
     uar_create_callback_t create_callback;
@@ -99,6 +101,10 @@ uar_strerror (const struct uar_archive *restrict uar)
             return "success";
         case UAR_INVALID_MAGIC:
             return "invalid archive magic";
+        case UAR_INVALID_ARCHIVE:
+            return "invalid archive";
+        case UAR_UNSUPPORTED_VERSION:
+            return "archive version is not supported";
         case UAR_INVALID_FILE:
             return "invalid file";
         case UAR_INVALID_PATH:
@@ -161,6 +167,7 @@ uar_create (void)
     uar->files = NULL;
     uar->stream = NULL;
     uar->root = NULL;
+    uar->stream_size = 0;
     uar->last_errno = 0;
     uar->err_file = NULL;
 
@@ -181,6 +188,8 @@ uar_initialize_root (struct uar_archive *uar)
     root->type = UF_DIR;
     root->mode = S_IFDIR | 0755;
     root->mtime = time (NULL);
+    root->uid = getuid ();
+    root->gid = getgid ();
 
     if (!uar_add_file_entry (uar, root))
         {
@@ -236,6 +245,18 @@ uar_stream_write (struct uar_archive *uar, const char *filename)
                     fclose (stream);
                     return false;
                 }
+
+            if (file->type == UF_LINK)
+                {
+                    if (fwrite (file->data.link.loc, 1, file->data.link.loclen,
+                                stream)
+                        != file->data.link.loclen)
+                        {
+                            uar_set_error (uar, UAR_SYSCALL_ERROR, file->name);
+                            fclose (stream);
+                            return false;
+                        }
+                }
         }
 
     uar->stream = freopen (NULL, "rb", uar->stream);
@@ -287,12 +308,13 @@ uar_stream_write (struct uar_archive *uar, const char *filename)
                 size -= buf_size;
         }
 
+    free (buf);
     fclose (stream);
     return true;
 }
 
 struct uar_archive *
-uar_create_stream (void)
+uar_stream_create (void)
 {
     struct uar_archive *uar = uar_create ();
     int cerrno;
@@ -315,6 +337,7 @@ uar_create_stream_error:
     cerrno = errno;
     uar_close (uar);
     errno = cerrno;
+    uar = NULL;
 uar_create_stream_ret:
     return uar;
 }
@@ -338,6 +361,31 @@ uar_stream_add_file (struct uar_archive *uar, const char *uar_filename,
     enum uar_error ecode = UAR_SUCCESS;
     void *buffer = NULL;
     struct uar_file *file = NULL;
+    uint64_t uar_file_namelen = strlen (uar_filename);
+
+    if (uar_file_namelen > PATH_MAX)
+        {
+            uar_set_error (uar, UAR_INVALID_PATH, fs_filename);
+            return NULL;
+        }
+
+    bool contains_dot_dot
+        = (uar_file_namelen > 3 && uar_filename[0] == '.'
+           && uar_filename[1] == '.' && uar_filename[2] == '/');
+
+    if ((uar_file_namelen > 2 && uar_filename[0] == '.'
+         && uar_filename[1] == '/')
+        || contains_dot_dot)
+        {
+            if (uar->create_callback != NULL)
+                uar->create_callback (
+                    uar, NULL, uar_filename, fs_filename, UAR_ELEVEL_WARNING,
+                    contains_dot_dot ? "removing leading '..'"
+                                     : "removing leading '.'");
+
+            uar_filename = uar_filename + 1 + (uar_file_namelen == 1);
+            uar_file_namelen -= 1 + (uar_file_namelen == 1);
+        }
 
     if (stinfo == NULL)
         {
@@ -380,7 +428,8 @@ uar_stream_add_file (struct uar_archive *uar, const char *uar_filename,
 
     fseek (stream, 0, SEEK_SET);
 
-    file = uar_file_create (uar_filename, 0, size, uar->header.size);
+    file = uar_file_create (uar_filename, uar_file_namelen, size,
+                            uar->header.size);
 
     if (file == NULL)
         {
@@ -513,7 +562,7 @@ uar_stream_add_dir (struct uar_archive *uar, const char *uar_dirname,
             struct uar_file *entry_file
                 = uar_stream_add_entry (uar, uar_fullpath, fs_fullpath, NULL);
 
-            if (entry_file != NULL)
+            if (entry_file != NULL && entry_file->type != UF_LINK)
                 size += entry_file->data.size;
 
             free (fs_fullpath);
@@ -565,6 +614,24 @@ uar_stream_add_link (struct uar_archive *uar, const char *uar_name,
                 stinfo = &custom_stinfo;
         }
 
+    uint64_t uar_file_namelen = strlen (uar_name);
+
+    bool contains_dot_dot = (uar_file_namelen > 3 && uar_name[0] == '.'
+                             && uar_name[1] == '.' && uar_name[2] == '/');
+
+    if ((uar_file_namelen > 2 && uar_name[0] == '.' && uar_name[1] == '/')
+        || contains_dot_dot)
+        {
+            if (uar->create_callback != NULL)
+                uar->create_callback (
+                    uar, NULL, uar_name, fs_name, UAR_ELEVEL_WARNING,
+                    contains_dot_dot ? "removing leading '..'"
+                                     : "removing leading '.'");
+
+            uar_name = uar_name + 1 + (uar_file_namelen == 1);
+            uar_file_namelen -= 1 + (uar_file_namelen == 1);
+        }
+
     file = uar_file_create (uar_name, 0, 0, uar->header.size);
 
     if (file == NULL)
@@ -593,18 +660,18 @@ uar_stream_add_link (struct uar_archive *uar, const char *uar_name,
             return NULL;
         }
 
-    file->data.linkinfo.loclen = link_len;
-    file->data.linkinfo.loc = malloc (link_len + 1);
+    file->data.link.loclen = link_len;
+    file->data.link.loc = malloc (link_len + 1);
 
-    if (file->data.linkinfo.loc == NULL)
+    if (file->data.link.loc == NULL)
         {
             uar_set_error (uar, UAR_OUT_OF_MEMORY, fs_name);
             uar_file_destroy (file);
             return NULL;
         }
 
-    memcpy (file->data.linkinfo.loc, link_buf, link_len);
-    file->data.linkinfo.loc[link_len] = 0;
+    memcpy (file->data.link.loc, link_buf, link_len);
+    file->data.link.loc[link_len] = 0;
 
     if (!uar_add_file_entry (uar, file))
         {
@@ -652,12 +719,14 @@ uar_stream_add_entry (struct uar_archive *uar, const char *uar_name,
                 }
         }
     else if (S_ISDIR (stinfo->st_mode))
-        {
-            file = uar_stream_add_dir (uar, uar_name, fs_name, stinfo);
-        }
+        file = uar_stream_add_dir (uar, uar_name, fs_name, stinfo);
+
+    else if (S_ISLNK (stinfo->st_mode))
+        file = uar_stream_add_link (uar, uar_name, fs_name, stinfo);
     else
         {
-            file = uar_stream_add_link (uar, uar_name, fs_name, stinfo);
+            uar_set_error (uar, UAR_INVALID_FILE, fs_name);
+            return NULL;
         }
 
     if (file != NULL)
@@ -669,6 +738,204 @@ uar_stream_add_entry (struct uar_archive *uar, const char *uar_name,
         }
 
     return file;
+}
+
+/* Validate the UAR archive header. */
+bool
+uar_stream_header_validate (struct uar_archive *uar)
+{
+    /* Compare magic to ensure it's a valid UAR archive. */
+    if (memcmp (uar->header.magic, UAR_MAGIC, sizeof (UAR_MAGIC)) != 0)
+        {
+            uar_set_error (uar, UAR_INVALID_MAGIC, NULL);
+            return false;
+        }
+
+    /* Check if the version is supported. */
+    if (uar->header.version > UAR_MAX_SUPPORTED_VERSION)
+        {
+            uar_set_error (uar, UAR_UNSUPPORTED_VERSION, NULL);
+            return false;
+        }
+
+    /* Check if the data block size is valid, to prevent buffer overflow. If
+       it's larger than the stream  size, it's invalid. This could be because
+       the archive is corrupted, or it's a malicious archive. */
+    if (uar->header.size > (uar->stream_size - sizeof (struct uar_header)))
+        {
+            uar_set_error (uar, UAR_INVALID_ARCHIVE, NULL);
+            return false;
+        }
+
+    /* At the moment, UAR doesn't support any flags. */
+    if (uar->header.flags != 0)
+        {
+            uar_set_error (uar, UAR_INVALID_ARCHIVE, NULL);
+            return false;
+        }
+
+    /* Check if the file is big enough to hold n number of files. */
+    if (uar->header.nfiles * sizeof (struct uar_file) > uar->header.size)
+        {
+            uar_set_error (uar, UAR_INVALID_ARCHIVE, NULL);
+            return false;
+        }
+
+    return true;
+}
+
+struct uar_archive *
+uar_stream_open (const char *filename)
+{
+    struct uar_archive *uar;
+    FILE *stream = fopen (filename, "rb");
+
+    if (stream == NULL)
+        return NULL;
+
+    uar = uar_create ();
+
+    if (uar == NULL)
+        return NULL;
+
+    uar->is_stream = true;
+    uar->stream = stream;
+
+    fseek (stream, 0, SEEK_END);
+    long size = ftell (stream);
+
+    if (size < 0 || size > INT64_MAX)
+        {
+            uar_set_error (uar, UAR_SYSCALL_ERROR, NULL);
+            return uar;
+        }
+
+    fseek (stream, 0, SEEK_SET);
+
+    if (((size_t) size) < sizeof (struct uar_header))
+        {
+            uar_set_error (uar, UAR_INVALID_ARCHIVE, NULL);
+            return uar;
+        }
+
+    if (fread (&uar->header, 1, sizeof (struct uar_header), stream)
+        != sizeof (struct uar_header))
+        {
+            uar_set_error (uar, UAR_SYSCALL_ERROR, NULL);
+            return uar;
+        }
+
+    uar->stream_size = size;
+
+    if (!uar_stream_header_validate (uar))
+        return uar;
+
+    uar->files = calloc (uar->header.nfiles, sizeof (struct uar_file *));
+
+    if (uar->files == NULL)
+        {
+            uar_set_error (uar, UAR_OUT_OF_MEMORY, NULL);
+            return uar;
+        }
+
+    uint64_t read_size = sizeof (struct uar_header)
+                         + (uar->header.nfiles * sizeof (struct uar_file));
+
+    for (uint64_t i = 0; i < uar->header.nfiles; i++)
+        {
+            struct uar_file *file = malloc (sizeof (struct uar_file));
+
+            if (file == NULL)
+                {
+                    uar_set_error (uar, UAR_OUT_OF_MEMORY, NULL);
+                    return uar;
+                }
+
+            if (fread (file, 1, sizeof (struct uar_file), stream)
+                != sizeof (struct uar_file))
+                {
+                    uar_set_error (uar, UAR_SYSCALL_ERROR, NULL);
+                    free (file);
+                    return uar;
+                }
+
+            /* Right after the file structure, the name of the file is stored,
+               with the length of the name stored in the namelen field.
+               First, we need to check if the namelen is valid.
+             */
+
+            if (file->namelen > PATH_MAX || file->namelen == 0
+                || read_size + file->namelen > ((uint64_t) size))
+                {
+                    /* At a later stage, we might want to rather call a callback
+                       function instead. */
+                    uar_set_error (uar, UAR_INVALID_ARCHIVE, NULL);
+                    free (file);
+                    return uar;
+                }
+
+            file->name = malloc (file->namelen + 1);
+
+            if (file->name == NULL)
+                {
+                    uar_set_error (uar, UAR_OUT_OF_MEMORY, NULL);
+                    free (file);
+                    return uar;
+                }
+
+            if (fread (file->name, 1, file->namelen, stream) != file->namelen)
+                {
+                    uar_set_error (uar, UAR_SYSCALL_ERROR, NULL);
+                    free (file->name);
+                    free (file);
+                    return uar;
+                }
+
+            file->name[file->namelen] = 0;
+
+            /* Next, we need to check if the file is a link. If it is, we need
+               to read the link location. */
+
+            if (file->type == UF_LINK)
+                {
+                    if (file->data.link.loclen > PATH_MAX
+                        || read_size + file->data.link.loclen
+                               > ((uint64_t) size))
+                        {
+                            uar_set_error (uar, UAR_INVALID_ARCHIVE, NULL);
+                            free (file->name);
+                            free (file);
+                            return uar;
+                        }
+
+                    file->data.link.loc = malloc (file->data.link.loclen + 1);
+
+                    if (file->data.link.loc == NULL)
+                        {
+                            uar_set_error (uar, UAR_OUT_OF_MEMORY, NULL);
+                            free (file->name);
+                            free (file);
+                            return uar;
+                        }
+
+                    if (fread (file->data.link.loc, 1, file->data.link.loclen,
+                               stream)
+                        != file->data.link.loclen)
+                        {
+                            uar_set_error (uar, UAR_SYSCALL_ERROR, NULL);
+                            free (file->name);
+                            free (file->data.link.loc);
+                            free (file);
+                            return uar;
+                        }
+
+                    file->data.link.loc[file->data.link.loclen] = 0;
+                }
+
+            uar->files[i] = file;
+        }
+
+    return uar;
 }
 
 struct uar_archive *
@@ -798,7 +1065,7 @@ uar_file_destroy (struct uar_file *file)
         return;
 
     if (file->type == UF_LINK)
-        free (file->data.linkinfo.loc);
+        free (file->data.link.loc);
 
     free (file->name);
     free (file);
@@ -1203,7 +1470,7 @@ uar_debug_print (const struct uar_archive *uar, bool print_file_contents)
             printf ("    mode: %04o\n", file->mode);
 
             if (file->type == UF_LINK)
-                printf ("    points to: %s\n", file->data.linkinfo.loc);
+                printf ("    points to: %s\n", file->data.link.loc);
             else
                 printf ("    size: %lu\n", file->data.size);
 
@@ -1392,4 +1659,16 @@ const char *
 uar_get_error_file (const struct uar_archive *uar)
 {
     return uar->err_file;
+}
+
+uid_t
+uar_file_get_uid (const struct uar_file *file)
+{
+    return file->uid;
+}
+
+gid_t
+uar_file_get_gid (const struct uar_file *file)
+{
+    return file->gid;
 }

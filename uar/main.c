@@ -293,9 +293,24 @@ create_archive (void)
 
 /* Archive extraction callback. */
 static bool
-extract_archive_callback (struct uar_file *file)
+extract_archive_callback (struct uar_archive *uar,
+                          struct uar_file *file __attribute__ ((unused)),
+                          const char *uar_name __attribute__ ((unused)),
+                          const char *fs_name, enum uar_error_level level,
+                          const char *message)
 {
-    pinfo ("extracting: %s\n", uar_file_get_name (file));
+    if (level == UAR_ELEVEL_NONE)
+        {
+            if (params.verbose)
+                fprintf (stdout, "%s\n", fs_name);
+        }
+    else if (level == UAR_ELEVEL_WARNING)
+        perr ("warning: %s: %s\n", fs_name,
+              message != NULL ? message : uar_strerror (uar));
+    else if (level == UAR_ELEVEL_ERROR)
+        perr ("error: %s: %s\n", fs_name,
+              message != NULL ? message : uar_strerror (uar));
+
     return true;
 }
 
@@ -307,7 +322,7 @@ extract_archive (void)
 
     pinfo ("extracting archive: %s\n", params.file);
 
-    struct uar_archive *uar = uar_open (params.file);
+    struct uar_archive *uar = uar_stream_open (params.file);
 
     if (uar == NULL || uar_has_error (uar))
         {
@@ -315,16 +330,28 @@ extract_archive (void)
             return;
         }
 
-#ifdef UAR_PRINT_VERBOSE_IMPL_INFO
-    uar_debug_print (uar, false);
-#endif
+    uar_set_extract_callback (uar, &extract_archive_callback);
 
-    if (!uar_extract (uar, params.cwd, &extract_archive_callback))
+    if (params.cwd != NULL)
+        {
+            if (chdir (params.cwd) != 0)
+                {
+                    pinfo ("failed to change working directory: %s\n",
+                           strerror (errno));
+                    return;
+                }
+        }
+
+    char *cwd = getcwd (NULL, 0);
+
+    if (!uar_stream_extract (uar, cwd))
         {
             pinfo ("failed to extract archive: %s\n", strerror (errno));
+            free (cwd);
             return;
         }
 
+    free (cwd);
     uar_close (uar);
 }
 
@@ -502,7 +529,8 @@ list_archive (void)
     table->files = xcalloc (nfiles, sizeof (struct archive_file_info));
     table->nfiles = 0;
 
-    if (!uar_iterate (uar, &list_archive_callback_analyze, (void *) table))
+    if (!uar_stream_iterate (uar, &list_archive_callback_analyze,
+                             (void *) table))
         {
             pinfo ("failed to read archive: %s\n", strerror (errno));
             goto list_archive_end;

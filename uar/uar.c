@@ -17,6 +17,7 @@
 #include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
+#include <utime.h>
 
 #if defined(__linux__)
 #    include <linux/limits.h>
@@ -66,13 +67,13 @@ struct uar_archive
     struct uar_file **files;
     struct uar_file *root;
     enum uar_error ecode;
-    bool is_stream;
-    uint8_t *buffer; /* Deprecated */
     FILE *stream;
     uint64_t stream_size;
     int last_errno;
     char *err_file;
+    uint64_t data_start;
     uar_create_callback_t create_callback;
+    uar_extract_callback_t extract_callback;
 };
 
 void
@@ -80,6 +81,13 @@ uar_set_create_callback (struct uar_archive *uar,
                          uar_create_callback_t callback)
 {
     uar->create_callback = callback;
+}
+
+void
+uar_set_extract_callback (struct uar_archive *uar,
+                          uar_extract_callback_t callback)
+{
+    uar->extract_callback = callback;
 }
 
 static void
@@ -156,8 +164,6 @@ uar_create (void)
     if (uar == NULL)
         return NULL;
 
-    uar->is_stream = false;
-    uar->buffer = NULL;
     uar->ecode = UAR_SUCCESS;
     uar->header.size = 0;
     memcpy (uar->header.magic, UAR_MAGIC, 4);
@@ -214,7 +220,7 @@ uar_initialize (struct uar_archive *uar)
 bool
 uar_stream_write (struct uar_archive *uar, const char *filename)
 {
-    if (uar == NULL || !uar->is_stream || uar->stream == NULL)
+    if (uar == NULL || uar->stream == NULL)
         return false;
 
     FILE *stream = fopen (filename, "wb");
@@ -322,7 +328,6 @@ uar_stream_create (void)
     if (uar == NULL)
         return NULL;
 
-    uar->is_stream = true;
     uar->stream = tmpfile ();
 
     if (uar->stream == NULL)
@@ -347,7 +352,6 @@ uar_stream_add_file (struct uar_archive *uar, const char *uar_filename,
                      const char *fs_filename, struct stat *stinfo)
 {
     assert (uar != NULL && "uar is NULL");
-    assert (uar->is_stream && "uar is not in stream mode");
     assert (uar_filename != NULL && "uar_filename is NULL");
     assert (fs_filename != NULL && "fs_filename is NULL");
 
@@ -691,7 +695,6 @@ uar_stream_add_entry (struct uar_archive *uar, const char *uar_name,
                       const char *fs_name, struct stat *stinfo)
 {
     assert (uar != NULL && "uar is NULL");
-    assert (uar->is_stream && "uar is not in stream mode");
     assert (uar_name != NULL && "uar_name is NULL");
     assert (fs_name != NULL && "fs_name is NULL");
 
@@ -798,7 +801,6 @@ uar_stream_open (const char *filename)
     if (uar == NULL)
         return NULL;
 
-    uar->is_stream = true;
     uar->stream = stream;
 
     fseek (stream, 0, SEEK_END);
@@ -838,8 +840,10 @@ uar_stream_open (const char *filename)
             return uar;
         }
 
-    uint64_t read_size = sizeof (struct uar_header)
-                         + (uar->header.nfiles * sizeof (struct uar_file));
+    uint64_t file_block_size
+        = sizeof (struct uar_header)
+          + (uar->header.nfiles * sizeof (struct uar_file));
+    uint64_t data_block_start = file_block_size;
 
     for (uint64_t i = 0; i < uar->header.nfiles; i++)
         {
@@ -865,7 +869,7 @@ uar_stream_open (const char *filename)
              */
 
             if (file->namelen > PATH_MAX || file->namelen == 0
-                || read_size + file->namelen > ((uint64_t) size))
+                || file_block_size + file->namelen > ((uint64_t) size))
                 {
                     /* At a later stage, we might want to rather call a callback
                        function instead. */
@@ -874,6 +878,7 @@ uar_stream_open (const char *filename)
                     return uar;
                 }
 
+            data_block_start += file->namelen;
             file->name = malloc (file->namelen + 1);
 
             if (file->name == NULL)
@@ -899,7 +904,7 @@ uar_stream_open (const char *filename)
             if (file->type == UF_LINK)
                 {
                     if (file->data.link.loclen > PATH_MAX
-                        || read_size + file->data.link.loclen
+                        || file_block_size + file->data.link.loclen
                                > ((uint64_t) size))
                         {
                             uar_set_error (uar, UAR_INVALID_ARCHIVE, NULL);
@@ -908,6 +913,7 @@ uar_stream_open (const char *filename)
                             return uar;
                         }
 
+                    data_block_start += file->data.link.loclen;
                     file->data.link.loc = malloc (file->data.link.loclen + 1);
 
                     if (file->data.link.loc == NULL)
@@ -935,127 +941,225 @@ uar_stream_open (const char *filename)
             uar->files[i] = file;
         }
 
+    uar->data_start = data_block_start;
     return uar;
 }
 
-struct uar_archive *
-uar_open (const char *filename)
+static bool
+uar_stream_extract_file (struct uar_archive *uar, struct uar_file *file,
+                         const char *path)
 {
-    struct uar_archive *uar = NULL;
-    FILE *stream = NULL;
-    int cerrno;
-
-    errno = 0;
-    uar = uar_create ();
-
-    if (uar == NULL)
-        return NULL;
-
-    stream = fopen (filename, "rb");
+    FILE *stream = fopen (path, "wb");
+    uint8_t buffer[1024];
+    uint64_t size = file->data.size;
 
     if (stream == NULL)
         {
-            uar_set_error (uar, UAR_IO_ERROR, NULL);
-            goto uar_open_ret;
+            uar_set_error (uar, UAR_SYSCALL_ERROR, path);
+            perror ("fopen");
+
+            if (uar->extract_callback != NULL)
+                uar->extract_callback (uar, file, file->name, path,
+                                       UAR_ELEVEL_WARNING, strerror (errno));
+
+            return false;
         }
 
-    fseek (stream, 0, SEEK_END);
-    size_t size = ftell (stream);
-    fseek (stream, 0, SEEK_SET);
-
-    if (fread (&uar->header, sizeof (struct uar_header), 1, stream) != 1)
+    if (fseek (uar->stream, uar->data_start + file->offset, SEEK_SET) != 0)
         {
-            uar_set_error (uar, UAR_IO_ERROR, NULL);
-            goto uar_open_ret;
+            uar_set_error (uar, UAR_SYSCALL_ERROR, path);
+
+            if (uar->extract_callback != NULL)
+                uar->extract_callback (uar, file, file->name, path,
+                                       UAR_ELEVEL_WARNING, strerror (errno));
+
+            fclose (stream);
+            return false;
         }
 
-    if (memcmp (uar->header.magic, UAR_MAGIC, 4) != 0)
+    while (size > 0)
         {
-            uar_set_error (uar, UAR_INVALID_MAGIC, NULL);
-            goto uar_open_ret;
+            size_t read_size = size > sizeof (buffer) ? sizeof (buffer) : size;
+
+            if (fread (buffer, 1, read_size, uar->stream) != read_size)
+                {
+                    uar_set_error (uar, UAR_SYSCALL_ERROR, path);
+
+                    if (uar->extract_callback != NULL)
+                        uar->extract_callback (uar, file, file->name, path,
+                                               UAR_ELEVEL_WARNING,
+                                               strerror (errno));
+
+                    fclose (stream);
+                    return false;
+                }
+
+            if (fwrite (buffer, 1, read_size, stream) != read_size)
+                {
+                    uar_set_error (uar, UAR_SYSCALL_ERROR, path);
+
+                    if (uar->extract_callback != NULL)
+                        uar->extract_callback (uar, file, file->name, path,
+                                               UAR_ELEVEL_WARNING,
+                                               strerror (errno));
+
+                    fclose (stream);
+                    return false;
+                }
+
+            size -= read_size;
         }
 
-    uint64_t filearr_size = uar->header.nfiles * sizeof (struct uar_file);
-
-    if (filearr_size > size)
+    if (fchmod (fileno (stream), file->mode) != 0)
         {
-            uar_set_error (uar, UAR_IO_ERROR, NULL);
-            goto uar_open_ret;
+            uar_set_error (uar, UAR_SYSCALL_ERROR, path);
+
+            if (uar->extract_callback != NULL)
+                uar->extract_callback (uar, file, file->name, path,
+                                       UAR_ELEVEL_WARNING, strerror (errno));
+
+            fclose (stream);
+            return false;
         }
 
-    if (uar->header.size > size)
-        {
-            uar_set_error (uar, UAR_IO_ERROR, NULL);
-            goto uar_open_ret;
-        }
+    fclose (stream);
+    return true;
+}
 
-    uar->files = calloc (uar->header.nfiles, sizeof (struct uar_file *));
-
-    if (uar->files == NULL)
-        {
-            uar_set_error (uar, UAR_OUT_OF_MEMORY, NULL);
-            goto uar_open_ret;
-        }
-
+bool
+uar_stream_extract (struct uar_archive *uar, const char *dest)
+{
     for (uint64_t i = 0; i < uar->header.nfiles; i++)
         {
-            struct uar_file *file = malloc (sizeof (struct uar_file));
+            struct uar_file *file = uar->files[i];
+            char *name = file->name;
+            size_t diff = 0;
+            bool is_root = strcmp (file->name, "/") == 0;
 
-            if (file == NULL)
+            if (!is_root)
                 {
-                    uar_set_error (uar, UAR_OUT_OF_MEMORY, NULL);
-                    goto uar_open_ret;
+                    if (name[0] == '/')
+                        diff += 1;
+
+                    if (strncmp (name, "./", 2) == 0)
+                        diff += 2;
+                    else if (strncmp (name, "../", 3) == 0)
+                        diff += 3;
+                    else if (strcmp (name, "..") == 0)
+                        diff += 2;
+                    else if (strcmp (name, ".") == 0)
+                        diff += 1;
                 }
 
-            if (fread (file, sizeof (struct uar_file), 1, stream) != 1)
+            char *path
+                = is_root ? (char *) dest
+                          : path_concat (dest, file->name + diff, strlen (dest),
+                                         file->namelen - diff);
+
+            if (path == NULL)
                 {
-                    uar_set_error (uar, UAR_IO_ERROR, NULL);
-                    goto uar_open_ret;
+                    uar_set_error (uar, UAR_OUT_OF_MEMORY, file->name);
+                    return false;
                 }
 
-            if (file->namelen > PATH_MAX)
+            if (!is_root)
                 {
-                    uar_set_error (uar, UAR_INVALID_PATH, NULL);
-                    goto uar_open_ret;
+                    switch (file->type)
+                        {
+                        case UF_FILE:
+                            if (!uar_stream_extract_file (uar, file, path))
+                                {
+                                    free (path);
+                                    return false;
+                                }
+                            break;
+                        case UF_DIR:
+                            if (mkdir (path, file->mode) != 0)
+                                {
+                                    uar_set_error (uar, UAR_SYSCALL_ERROR,
+                                                   path);
+
+                                    if (uar->extract_callback != NULL)
+                                        uar->extract_callback (
+                                            uar, file, file->name, path,
+                                            UAR_ELEVEL_WARNING,
+                                            strerror (errno));
+
+                                    free (path);
+                                    return false;
+                                }
+                            break;
+                        case UF_LINK:
+                            if (symlink (file->data.link.loc, path) != 0)
+                                {
+                                    uar_set_error (uar, UAR_SYSCALL_ERROR,
+                                                   path);
+
+                                    if (uar->extract_callback != NULL)
+                                        uar->extract_callback (
+                                            uar, file, file->name, path,
+                                            UAR_ELEVEL_WARNING,
+                                            strerror (errno));
+
+                                    free (path);
+                                    return false;
+                                }
+                            break;
+                        default:
+                            uar_set_error (uar, UAR_INVALID_FILE, file->name);
+
+                            if (uar->extract_callback != NULL)
+                                uar->extract_callback (uar, file, file->name,
+                                                       path, UAR_ELEVEL_WARNING,
+                                                       strerror (errno));
+
+                            free (path);
+                            return false;
+                        }
                 }
 
-            file->name = malloc (file->namelen + 1);
+            struct utimbuf times
+                = { .actime = time (NULL), .modtime = file->mtime };
 
-            if (file->name == NULL)
+            if (utime (path, &times) != 0)
                 {
-                    uar_set_error (uar, UAR_OUT_OF_MEMORY, NULL);
-                    goto uar_open_ret;
+                    uar_set_error (uar, UAR_SYSCALL_ERROR, path);
+
+                    if (uar->extract_callback != NULL)
+                        uar->extract_callback (uar, file, file->name, path,
+                                               UAR_ELEVEL_WARNING,
+                                               strerror (errno));
+
+                    if (!is_root)
+                        free (path);
+
+                    return false;
                 }
 
-            if (fread (file->name, 1, file->namelen, stream) != file->namelen)
+            if (chown (path, file->uid, file->gid) != 0)
                 {
-                    uar_set_error (uar, UAR_IO_ERROR, file->name);
-                    goto uar_open_ret;
+                    uar_set_error (uar, UAR_SYSCALL_ERROR, path);
+
+                    if (uar->extract_callback != NULL)
+                        uar->extract_callback (uar, file, file->name, path,
+                                               UAR_ELEVEL_WARNING,
+                                               strerror (errno));
+
+                    if (!is_root)
+                        free (path);
+
+                    return false;
                 }
 
-            file->name[file->namelen] = 0;
-            uar->files[i] = file;
+            if (uar->extract_callback != NULL)
+                uar->extract_callback (uar, file, file->name, path,
+                                       UAR_ELEVEL_NONE, NULL);
+
+            if (!is_root)
+                free (path);
         }
 
-    uar->buffer = malloc (uar->header.size + 1);
-
-    if (uar->buffer == NULL)
-        {
-            uar_set_error (uar, UAR_OUT_OF_MEMORY, NULL);
-            goto uar_open_ret;
-        }
-
-    if (fread (uar->buffer, 1, uar->header.size, stream) != uar->header.size)
-        {
-            uar_set_error (uar, UAR_IO_ERROR, NULL);
-            goto uar_open_ret;
-        }
-
-uar_open_ret:
-    cerrno = errno;
-    fclose (stream);
-    errno = cerrno;
-    return uar;
+    return true;
 }
 
 void
@@ -1077,10 +1181,7 @@ uar_close (struct uar_archive *uar)
     if (uar == NULL)
         return;
 
-    if (uar->is_stream)
-        fclose (uar->stream);
-    else
-        free (uar->buffer);
+    fclose (uar->stream);
 
     for (uint64_t i = 0; i < uar->header.nfiles; i++)
         {
@@ -1171,248 +1272,6 @@ uar_file_create (const char *name, uint64_t namelen, uint64_t size,
     return file;
 }
 
-struct uar_file *
-uar_add_file (struct uar_archive *restrict uar, const char *name,
-              const char *path, struct stat *stinfo)
-{
-    assert (uar != NULL && "uar is NULL");
-    assert (name != NULL && "name is NULL");
-    assert (path != NULL && "path is NULL");
-    assert (!uar->is_stream && "uar in non-stream mode is not supported yet");
-
-    uint64_t namelen = strlen (name);
-    struct stat *file_stinfo = stinfo, st_stinfo = { 0 };
-
-    if (namelen >= PATH_MAX)
-        {
-            uar_set_error (uar, UAR_INVALID_PATH, path);
-            return NULL;
-        }
-
-    if (file_stinfo == NULL)
-        {
-            if (lstat (path, &st_stinfo) != 0)
-                {
-                    uar_set_error (uar, UAR_IO_ERROR, path);
-                    return NULL;
-                }
-
-            file_stinfo = &st_stinfo;
-        }
-
-    FILE *stream = fopen (path, "rb");
-
-    if (stream == NULL)
-        {
-            uar_set_error (uar, UAR_IO_ERROR, path);
-            return NULL;
-        }
-
-    fseek (stream, 0, SEEK_END);
-    long size = ftell (stream);
-
-    if (size < 0)
-        {
-            uar_set_error (uar, UAR_IO_ERROR, path);
-            fclose (stream);
-            return NULL;
-        }
-
-    fseek (stream, 0, SEEK_SET);
-
-    struct uar_file *file
-        = uar_file_create (name, namelen, size, uar->header.size);
-
-    if (file == NULL)
-        {
-            uar_set_error (uar, UAR_OUT_OF_MEMORY, path);
-            fclose (stream);
-            return NULL;
-        }
-
-    file->mtime = file_stinfo->st_mtime;
-    uar->header.size += size;
-
-    if (!uar_add_file_entry (uar, file))
-        {
-            uar_file_destroy (file);
-            fclose (stream);
-            return NULL;
-        }
-
-    uar->buffer = realloc (uar->buffer, uar->header.size);
-
-    if (uar->buffer == NULL)
-        {
-            uar_set_error (uar, UAR_OUT_OF_MEMORY, path);
-            fclose (stream);
-            return NULL;
-        }
-
-    if (size != 0 && fread (uar->buffer + file->offset, size, 1, stream) != 1)
-        {
-            uar_set_error (uar, UAR_IO_ERROR, path);
-            fclose (stream);
-            return NULL;
-        }
-
-    fclose (stream);
-    return file;
-}
-
-struct uar_file *
-uar_add_dir (struct uar_archive *uar, const char *dname, const char *path,
-             bool (*callback) (struct uar_file *file, const char *fullname,
-                               const char *fullpath))
-{
-    assert (uar != NULL && "uar is NULL");
-    assert (dname != NULL && "dname is NULL");
-    assert (path != NULL && "path is NULL");
-    assert (!uar->is_stream && "uar in non-stream mode is not supported yet");
-
-    char *name = (char *) dname;
-    bool free_name = false;
-    int cerrno;
-    uint64_t namelen;
-
-    if (strcmp (name, ".") == 0)
-        {
-            name = strdup ("/");
-            free_name = true;
-            namelen = 1;
-        }
-    else
-        namelen = strlen (name);
-
-    if (namelen >= PATH_MAX)
-        {
-            uar_set_error (uar, UAR_INVALID_PATH, path);
-            return NULL;
-        }
-
-    DIR *dir = opendir (path);
-    struct dirent *entry = NULL;
-
-    if (dir == NULL)
-        {
-            uar_set_error (uar, UAR_INVALID_FILE, path);
-            return NULL;
-        }
-
-    struct uar_file *dir_file
-        = uar_file_create (name, namelen, 0, uar->header.size);
-    uint64_t dir_size = 0;
-
-    dir_file->type = UF_DIR;
-
-    if (callback != NULL && !callback (dir_file, name, path))
-        {
-            uar_set_error (uar, UAR_SUCCESS, NULL);
-            uar_file_destroy (dir_file);
-            return NULL;
-        }
-
-    if (!uar_add_file_entry (uar, dir_file))
-        {
-            uar_file_destroy (dir_file);
-            return NULL;
-        }
-
-    while ((entry = readdir (dir)) != NULL)
-        {
-            if (strcmp (entry->d_name, ".") == 0
-                || strcmp (entry->d_name, "..") == 0)
-                continue;
-
-            struct stat stinfo = { 0 };
-
-            if (256 + namelen >= PATH_MAX)
-                {
-                    uar_set_error (uar, UAR_INVALID_PATH, path);
-                    uar_file_destroy (dir_file);
-                    closedir (dir);
-                    return NULL;
-                }
-
-            uint64_t dnamelen = strlen (entry->d_name);
-
-            char *fullpath
-                = path_concat (path, entry->d_name, strlen (path), dnamelen);
-            assert (fullpath != NULL);
-
-            char *fullname
-                = path_concat (name, entry->d_name, namelen, dnamelen);
-            assert (fullname != NULL);
-
-            if (lstat (fullpath, &stinfo) != 0)
-                {
-                    uar_set_error (uar, UAR_IO_ERROR, fullpath);
-                    goto uar_add_dir_error;
-                }
-
-            if (S_ISREG (stinfo.st_mode))
-                {
-                    struct uar_file *file
-                        = uar_add_file (uar, fullname, fullpath, &stinfo);
-
-                    if (file == NULL)
-                        {
-                            goto uar_add_dir_error;
-                        }
-
-                    if (callback != NULL
-                        && !callback (file, fullname, fullpath))
-                        {
-                            uar_set_error (uar, UAR_SUCCESS, NULL);
-                            goto uar_add_dir_error;
-                        }
-
-                    file->mode = stinfo.st_mode;
-                    dir_size += file->data.size;
-                }
-            else if (S_ISDIR (stinfo.st_mode))
-                {
-                    struct uar_file *direntry
-                        = uar_add_dir (uar, fullname, fullpath, callback);
-
-                    if (direntry == NULL)
-                        {
-                            goto uar_add_dir_error;
-                        }
-
-                    direntry->mode = stinfo.st_mode;
-                    dir_size += direntry->data.size;
-                }
-            else
-                assert (false && "Not supported");
-
-            free (fullpath);
-            free (fullname);
-
-            continue;
-
-        uar_add_dir_error:
-            cerrno = errno;
-            uar_file_destroy (dir_file);
-            free (fullpath);
-            free (fullname);
-            errno = cerrno;
-            goto uar_add_dir_end;
-        }
-
-    dir_file->data.size = dir_size;
-
-uar_add_dir_end:
-    cerrno = errno;
-    closedir (dir);
-
-    if (free_name)
-        free (name);
-
-    errno = cerrno;
-    return dir_file;
-}
-
 void
 uar_file_set_mode (struct uar_file *file, mode_t mode)
 {
@@ -1427,13 +1286,34 @@ uar_debug_print_file_contents (const struct uar_archive *uar,
     printf ("==================\n");
     fflush (stdout);
 
-    ssize_t size
-        = write (STDOUT_FILENO, uar->buffer + file->offset, file->data.size);
-
-    if (size == -1 || ((uint64_t) size) != file->data.size)
+    if (fseek (uar->stream, uar->data_start + file->offset, SEEK_SET) != 0)
         {
-            perror ("write");
+            perror ("fseek");
             return;
+        }
+
+    uint8_t buffer[1024];
+
+    while (file->data.size > 0)
+        {
+            size_t size = file->data.size > sizeof (buffer) ? sizeof (buffer)
+                                                            : file->data.size;
+
+            if (fread (buffer, 1, size, uar->stream) != size)
+                {
+                    perror ("read");
+                    return;
+                }
+
+            for (size_t i = 0; i < size; i++)
+                {
+                    if (buffer[i] == '\n')
+                        putchar ('\n');
+                    else
+                        putchar (buffer[i]);
+                }
+
+            file->data.size -= size;
         }
 
     putchar ('\n');
@@ -1450,7 +1330,6 @@ uar_debug_print (const struct uar_archive *uar, bool print_file_contents)
     printf ("  flags: %u\n", uar->header.flags);
     printf ("  nfiles: %lu\n", uar->header.nfiles);
     printf ("  size: %lu\n", uar->header.size);
-    printf ("  stream?: %i\n", uar->is_stream);
 
     for (uint64_t i = 0; i < uar->header.nfiles; i++)
         {
@@ -1480,124 +1359,9 @@ uar_debug_print (const struct uar_archive *uar, bool print_file_contents)
 }
 
 bool
-uar_write (struct uar_archive *uar, const char *filename)
-{
-    FILE *stream = fopen (filename, "wb");
-
-    if (stream == NULL)
-        {
-            uar_set_error (uar, UAR_IO_ERROR, filename);
-            return false;
-        }
-
-    if (fwrite (&uar->header, sizeof (struct uar_header), 1, stream) != 1)
-        {
-            uar_set_error (uar, UAR_IO_ERROR, filename);
-            fclose (stream);
-            return false;
-        }
-
-    for (uint64_t i = 0; i < uar->header.nfiles; i++)
-        {
-            struct uar_file *file = uar->files[i];
-
-            if (fwrite (file, sizeof (struct uar_file), 1, stream) != 1)
-                {
-                    uar_set_error (uar, UAR_IO_ERROR, file->name);
-                    fclose (stream);
-                    return false;
-                }
-
-            if (fwrite (file->name, 1, file->namelen, stream) != file->namelen)
-                {
-                    uar_set_error (uar, UAR_IO_ERROR, file->name);
-                    fclose (stream);
-                    return false;
-                }
-        }
-
-    if (fwrite (uar->buffer, 1, uar->header.size, stream) != uar->header.size)
-        {
-            uar_set_error (uar, UAR_IO_ERROR, NULL);
-            fclose (stream);
-            return false;
-        }
-
-    fclose (stream);
-    return true;
-}
-
-bool
-uar_extract (struct uar_archive *uar, const char *cwd,
-             bool (*callback) (struct uar_file *file))
-{
-    if (cwd != NULL && chdir (cwd) != 0)
-        {
-            uar_set_error (uar, UAR_SYSTEM_ERROR, NULL);
-            return false;
-        }
-
-    for (uint64_t i = 0; i < uar->header.nfiles; i++)
-        {
-            struct uar_file *file = uar->files[i];
-
-            if (callback != NULL && !callback (file))
-                return false;
-
-            char *name = file->name;
-
-            if (name[0] == '/')
-                name += 2;
-
-            switch (file->type)
-                {
-                case UF_FILE:
-                    {
-                        FILE *stream = fopen (name, "wb");
-
-                        if (stream == NULL)
-                            {
-                                uar_set_error (uar, UAR_IO_ERROR, name);
-                                return false;
-                            }
-
-                        if (fwrite (uar->buffer + file->offset, 1,
-                                    file->data.size, stream)
-                            != file->data.size)
-                            {
-                                uar_set_error (uar, UAR_IO_ERROR, name);
-                                return false;
-                            }
-
-                        fchmod (fileno (stream), file->mode & 07777);
-                        fclose (stream);
-                    }
-                    break;
-
-                case UF_DIR:
-                    if (file->namelen == 1 && file->name[0] == '/')
-                        continue;
-
-                    if (mkdir (name, file->mode) != 0)
-                        {
-                            uar_set_error (uar, UAR_SYSTEM_ERROR, name);
-                            return false;
-                        }
-
-                    break;
-
-                default:
-                    assert (false && "unknown file type");
-                    return false;
-                }
-        }
-
-    return true;
-}
-
-bool
-uar_iterate (struct uar_archive *uar,
-             bool (*callback) (struct uar_file *file, void *data), void *data)
+uar_stream_iterate (struct uar_archive *uar,
+                    bool (*callback) (struct uar_file *file, void *data),
+                    void *data)
 {
     for (uint64_t i = 0; i < uar->header.nfiles; i++)
         {

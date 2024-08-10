@@ -46,11 +46,17 @@ typedef bool (*uar_create_callback_t) (
     struct uar_archive *uar, struct uar_file *file, const char *uar_name,
     const char *fs_name, enum uar_error_level level, const char *message);
 
+typedef bool (*uar_extract_callback_t) (
+    struct uar_archive *uar, struct uar_file *file, const char *uar_name,
+    const char *fs_name, enum uar_error_level level, const char *message);
+
 void uar_set_create_callback (struct uar_archive *uar,
                               uar_create_callback_t callback);
+void uar_set_extract_callback (struct uar_archive *uar,
+                               uar_extract_callback_t callback);
+bool uar_stream_extract (struct uar_archive *uar, const char *dest);
 
 struct uar_archive *uar_create (void);
-struct uar_archive *uar_open (const char *filename);
 struct uar_archive *uar_stream_open (const char *filename);
 struct uar_archive *uar_stream_create (void);
 void uar_close (struct uar_archive *uar);
@@ -65,19 +71,9 @@ bool uar_has_error (const struct uar_archive *restrict uar);
 const char *uar_strerror (const struct uar_archive *restrict uar);
 uint64_t uar_get_file_count (const struct uar_archive *restrict uar);
 
-struct uar_file *uar_add_file (struct uar_archive *restrict uar,
-                               const char *name, const char *path,
-                               struct stat *stinfo);
-struct uar_file *
-uar_add_dir (struct uar_archive *uar, const char *name, const char *path,
-             bool (*callback) (struct uar_file *file, const char *fullname,
-                               const char *fullpath));
-bool uar_extract (struct uar_archive *uar, const char *cwd,
-                  bool (*callback) (struct uar_file *file));
-bool uar_write (struct uar_archive *uar, const char *filename);
-bool uar_iterate (struct uar_archive *uar,
-                  bool (*callback) (struct uar_file *file, void *data),
-                  void *data);
+bool uar_stream_iterate (struct uar_archive *uar,
+                         bool (*callback) (struct uar_file *file, void *data),
+                         void *data);
 
 struct uar_file *uar_file_create (const char *name, uint64_t namelen,
                                   uint64_t size, uint32_t offset);

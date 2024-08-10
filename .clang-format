@@ -1,11 +1,9 @@
 IndentWidth: 4
-IndentStyle: Spaces
 BasedOnStyle: GNU
 ColumnLimit: 80
 BreakBeforeBraces: GNU
 UseTab: Never
 SpaceAfterCStyleCast: true
-SpaceAfterFunctionName: false
 AlignArrayOfStructures: Left
 IndentPPDirectives: AfterHash
 # IndentCaseLabels: true

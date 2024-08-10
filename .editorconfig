@@ -4,6 +4,9 @@ indent_size = 4
 end_of_line = lf
 charset = utf-8
 
+[*.S,*.s,*.asm]
+insert_final_newline = true
+
 [*.sh]
 
 shell_variant      = posix

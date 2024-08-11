@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <unistd.h>
 
 freehttpd_request_t *
@@ -38,7 +39,8 @@ freehttpd_request_init (const char *method, const char *uri,
 }
 
 freehttpd_header_t *
-freehttpd_header_init (const char *name, const char *value)
+freehttpd_header_init (const char *name, const char *value, size_t name_length,
+                       size_t value_length)
 {
     freehttpd_header_t *header = calloc (1, sizeof (freehttpd_header_t));
 
@@ -46,10 +48,18 @@ freehttpd_header_init (const char *name, const char *value)
         return NULL;
 
     if (name != NULL)
-        header->name = strdup (name);
+        {
+            header->name = strdup (name);
+            header->name_length
+                = name_length == 0 ? strlen (name) : name_length;
+        }
 
     if (value != NULL)
-        header->value = strdup (value);
+        {
+            header->value = strdup (value);
+            header->value_length
+                = value_length == 0 ? strlen (value) : value_length;
+        }
 
     return header;
 }
@@ -82,7 +92,13 @@ freehttpd_request_free (freehttpd_request_t *request)
         free (request->uri);
 
     if (request->version != NULL)
-        free (request->version);
+        free (request->version - 5);
+
+    if (request->path != NULL)
+        free (request->path);
+
+    if (request->query != NULL)
+        free (request->query);
 
     if (request->headers != NULL)
         {
@@ -96,6 +112,48 @@ freehttpd_request_free (freehttpd_request_t *request)
         free (request->body);
 
     free (request);
+}
+
+static char *
+urldecode (const char *input, size_t *len)
+{
+    char *output = calloc (strlen (input) + 1, 1);
+
+    if (output == NULL)
+        return NULL;
+
+    size_t i = 0, j = 0;
+
+    for (; input[i] != 0; i++, j++)
+        {
+            if (input[i] == '%')
+                {
+                    if (input[i + 1] == 0 || input[i + 2] == 0)
+                        {
+                            free (output);
+                            return NULL;
+                        }
+
+                    char c1 = tolower (input[i + 1]);
+                    char c2 = tolower (input[i + 2]);
+                    int c1n = isdigit (c1) ? c1 - '0' : c1 - 'a' + 10;
+                    int c2n = isdigit (c2) ? c2 - '0' : c2 - 'a' + 10;
+                    int code = c1n * 16 + c2n;
+                    output[j] = (char) code;
+                    i += 2;
+                }
+            else
+                output[j] = input[i];
+        }
+
+    output[j] = 0;
+
+    printf ("output: %s\n", output);
+
+    if (len != NULL)
+        *len = j;
+
+    return output;
 }
 
 const char *const SUPPORTED_METHODS[]
@@ -126,7 +184,10 @@ freehttpd_request_parse (freehttpd_t *freehttpd, int sockfd, ecode_t *error)
             char c;
             size_t j = 0;
 
-            while (read (sockfd, &c, 1) == 1)
+            /* TODO: instead of always calling read with size 1, we could
+               optimize this by reading more bytes at once and then parsing
+               the buffer. */
+            while (recv (sockfd, &c, 1, 0) == 1)
                 {
                     if (isspace (c))
                         break;
@@ -172,6 +233,30 @@ freehttpd_request_parse (freehttpd_t *freehttpd, int sockfd, ecode_t *error)
             return NULL;
         }
 
+    if (memcmp (request->version, "HTTP/", 5) != 0)
+        {
+            freehttpd_request_free (request);
+            *error = E_MALFORMED_REQUEST;
+            return NULL;
+        }
+
+    request->version += 5;
+    request->version_length -= 5;
+
+    char *path = strchr (request->uri, '?');
+
+    if (path != NULL)
+        {
+            path = strndup (request->uri, path - request->uri);
+            request->query = strdup (path + 1);
+            request->query_length
+                = request->uri_length - request->path_length - 1;
+        }
+    else
+        path = strdup (request->uri);
+
+    request->path = urldecode (path, &request->path_length);
+    free (path);
     *error = E_OK;
     return request;
 }

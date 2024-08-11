@@ -1,6 +1,7 @@
 #include "freehttpd.h"
 #include <errno.h>
 #include <getopt.h>
+#include <magic.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -89,10 +90,27 @@ main (int argc, char **argv)
     if (!validate_settings ())
         exit (EXIT_FAILURE);
 
-    freehttpd_t *freehttpd = freehttpd_init ();
+    magic_t magic = magic_open (MAGIC_MIME);
     unsigned int port = 8080;
     size_t uri_len = 1024;
     ecode_t code = E_OK;
+
+    if (magic == NULL)
+        {
+            fprintf (stderr, "%s: failed to initialize magic\n",
+                     config.progname);
+            exit (EXIT_FAILURE);
+        }
+
+    if (magic_load (magic, NULL) != 0)
+        {
+            fprintf (stderr, "%s: failed to load magic database\n",
+                     config.progname);
+            magic_close (magic);
+            exit (EXIT_FAILURE);
+        }
+
+    freehttpd_t *freehttpd = freehttpd_init (magic);
 
     code = freehttpd_setopt (freehttpd, FREEHTTPD_CONFIG_PORT, &port);
 
@@ -109,6 +127,13 @@ main (int argc, char **argv)
     if (code != E_OK)
         goto error;
 
+    char *docroot = getenv ("FREEHTTPD_DOCROOT");
+    code = freehttpd_setopt (freehttpd, FREEHTTPD_CONFIG_DOCROOT,
+                             docroot ? docroot : "/var/www");
+
+    if (code != E_OK)
+        goto error;
+
     code = freehttpd_start (freehttpd);
 
     if (code != E_OK)
@@ -121,5 +146,6 @@ main (int argc, char **argv)
         }
 
     freehttpd_free (freehttpd);
+    magic_close (magic);
     return 0;
 }

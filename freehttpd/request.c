@@ -47,17 +47,29 @@ freehttpd_header_init (const char *name, const char *value, size_t name_length,
     if (header == NULL)
         return NULL;
 
+    freehttpd_header_t on_stack
+        = freehttpd_header_init_stack (name, value, name_length, value_length);
+    memcpy (header, &on_stack, sizeof (freehttpd_header_t));
+
+    return header;
+}
+
+freehttpd_header_t
+freehttpd_header_init_stack (const char *name, const char *value,
+                             size_t name_length, size_t value_length)
+{
+    freehttpd_header_t header = { 0 };
+
     if (name != NULL)
         {
-            header->name = strdup (name);
-            header->name_length
-                = name_length == 0 ? strlen (name) : name_length;
+            header.name = strdup (name);
+            header.name_length = name_length == 0 ? strlen (name) : name_length;
         }
 
     if (value != NULL)
         {
-            header->value = strdup (value);
-            header->value_length
+            header.value = strdup (value);
+            header.value_length
                 = value_length == 0 ? strlen (value) : value_length;
         }
 

@@ -1,5 +1,7 @@
 #include "freehttpd.h"
+#include "http_error.h"
 #include "log.h"
+#include "protocol.h"
 #include "request.h"
 #include "response.h"
 
@@ -24,6 +26,7 @@ struct freehttpd
     int sockfd;
     magic_t magic;
     freehttpd_config_t *config;
+    freehttpd_errdoc_tbl_t *errdoc_tbl;
 };
 
 static freehttpd_config_t *
@@ -65,8 +68,11 @@ freehttpd_init (magic_t magic)
         return NULL;
 
     freehttpd->sockfd = -1;
-    freehttpd->config = freehttpd_config_init ();
     freehttpd->magic = magic;
+    freehttpd->config = freehttpd_config_init ();
+    freehttpd->errdoc_tbl = freehttpd_error_document_tbl_init ();
+
+    freehttpd_error_document_load_defaults (freehttpd->errdoc_tbl);
     return freehttpd;
 }
 
@@ -122,6 +128,7 @@ freehttpd_free (freehttpd_t *freehttpd)
     if (freehttpd == NULL)
         return;
 
+    freehttpd_error_document_tbl_free (freehttpd->errdoc_tbl);
     freehttpd_config_free (freehttpd->config);
     free (freehttpd);
 }
@@ -179,9 +186,12 @@ freehttpd_listen (freehttpd_t *freehttpd)
 }
 
 static ecode_t
-freehttpd_send_error (FILE *stream, int sockfd, freehttpd_status_t status)
+freehttpd_send_error (freehttpd_t *freehttpd, FILE *stream, int sockfd,
+                      freehttpd_status_t status, const char *version)
 {
-    freehttpd_response_t *response = freehttpd_response_init ("1.1", 3, status);
+    freehttpd_response_t *response = freehttpd_response_init (
+        stream, version == NULL ? HTTP1_1 : version, 3, status);
+    ecode_t ret = E_OK;
 
     if (response == NULL)
         return E_LIBC_MALLOC;
@@ -189,31 +199,45 @@ freehttpd_send_error (FILE *stream, int sockfd, freehttpd_status_t status)
     if (stream == NULL)
         stream = fdopen (sockfd, "w");
 
+    if (stream == NULL)
+        {
+            freehttpd_response_free (response);
+            return E_LIBC_FDOPEN;
+        }
+
     freehttpd_response_add_default_headers (response);
-    freehttpd_response_add_header (response, "Content-Type",
-                                   "text/html; charset=\"utf-8\"", 12, 26);
 
-    response->body = NULL;
-    (void) (asprintf (&response->body,
-                      "<center><h1>%d %s</h1><hr><p>freehttpd</p></center>\r\n",
-                      response->status.code, response->status.text)
-            + 1);
+    const freehttpd_errdoc_t *doc
+        = freehttpd_error_document_get (freehttpd->errdoc_tbl, status);
 
-    response->body_length = strlen (response->body);
+    if (doc == NULL)
+        {
+            freehttpd_response_add_header (response, "Content-Length", 0, "0");
+            freehttpd_response_head_send (response);
+            freehttpd_response_begin_end (response);
+            return E_OK;
+        }
 
-    char *len = NULL;
-    (void) (asprintf (&len, "%lu", response->body_length) + 1);
+    freehttpd_response_add_header (response, "Content-Type", 0,
+                                   "text/html; charset=\"utf-8\"");
+    freehttpd_response_add_header (response, "Content-Length", 0, "%lu",
+                                   doc->document_length);
 
-    freehttpd_response_add_header (response, "Content-Length", len, 14,
-                                   strlen (len));
-
-    ecode_t ret = freehttpd_response_send (response, stream);
+    ret = freehttpd_response_head_send (response);
 
     if (ret != E_OK)
-        log_err (LOG_ERR "failed to send error response: %i\n", ret);
+        log_err (LOG_ERR "failed to send error response headers: %i\n", ret);
 
-    fflush (stream);
-    free (len);
+    ret = freehttpd_response_begin_body (response);
+
+    if (ret != E_OK)
+        log_err (LOG_ERR "failed to start sending response: %i\n", ret);
+
+    if (freehttpd_response_write (response, doc->document, 1,
+                                  doc->document_length)
+        != doc->document_length)
+        log_err (LOG_ERR "failed to write error response: %i\n", ret);
+
     freehttpd_response_free (response);
     return ret;
 }
@@ -238,13 +262,14 @@ iasprintf (char **strp, const char *fmt, ...)
     va_end (ap);
 }
 
+/*
 static ecode_t
 freehttpd_respond_dindex (freehttpd_t *freehttpd, freehttpd_request_t *request,
                           freehttpd_response_t *response, FILE *stream,
                           const char *rpath)
 {
     freehttpd_response_set_status (response, FREEHTTPD_STATUS_OK);
-    ecode_t code = freehttpd_response_send (response, stream);
+    ecode_t code = freehttpd_response_head_send (response);
 
     if (code != E_OK)
         return code;
@@ -383,7 +408,19 @@ freehttpd_respond_dindex (freehttpd_t *freehttpd, freehttpd_request_t *request,
     closedir (dir);
     return E_OK;
 }
+*/
 
+static ecode_t
+freehttpd_respond_http1x (freehttpd_t *freehttpd, freehttpd_request_t *request,
+                          freehttpd_response_t *response)
+{
+    return freehttpd_send_error (freehttpd, response->stream, 0,
+                                 FREEHTTPD_STATUS_NOT_IMPLEMENTED,
+                                 request->version);
+    // return E_OK;
+}
+
+/*
 static ecode_t
 freehttpd_respond (freehttpd_t *freehttpd, freehttpd_request_t *request,
                    freehttpd_response_t *response, FILE *stream)
@@ -481,7 +518,7 @@ freehttpd_respond (freehttpd_t *freehttpd, freehttpd_request_t *request,
         content_type = "application/javascript";
     else
         {
-            magic_descriptor (freehttpd->magic, fileno (file));
+            content_type = magic_descriptor (freehttpd->magic, fileno (file));
 
             if (content_type == NULL)
                 content_type = "application/octet-stream";
@@ -499,7 +536,7 @@ freehttpd_respond (freehttpd_t *freehttpd, freehttpd_request_t *request,
         }
 
     freehttpd_response_set_status (response, status);
-    ecode_t code = freehttpd_response_send (response, stream);
+    ecode_t code = freehttpd_response_head_send (response);
 
     if (code != E_OK)
         {
@@ -568,12 +605,13 @@ freehttpd_respond_error:
     freehttpd_response_set_status (response, status);
 
     if (status != FREEHTTPD_STATUS_OK)
-        freehttpd_send_error (stream, fileno (stream), status);
+        freehttpd_send_error (stream, 0, status, request->version);
 
     free (rpath);
     free (fs_path);
     return E_OK;
 }
+*/
 
 static ecode_t
 freehttpd_loop (freehttpd_t *freehttpd)
@@ -596,28 +634,43 @@ freehttpd_loop (freehttpd_t *freehttpd)
             if (code != E_OK)
                 {
                     log_err (LOG_ERR "failed to parse request: %i\n", code);
-                    freehttpd_send_error (NULL, client_sockfd,
-                                          FREEHTTPD_STATUS_BAD_REQUEST);
-                    continue;
-                }
-
-            freehttpd_response_t *response = freehttpd_response_init (
-                request->version, request->version_length, FREEHTTPD_STATUS_OK);
-
-            if (response == NULL)
-                {
-                    log_err (LOG_ERR "failed to init response\n");
-                    freehttpd_send_error (
-                        NULL, client_sockfd,
-                        FREEHTTPD_STATUS_INTERNAL_SERVER_ERROR);
-                    freehttpd_request_free (request);
-                    close (client_sockfd);
+                    freehttpd_send_error (freehttpd, NULL, client_sockfd,
+                                          FREEHTTPD_STATUS_BAD_REQUEST,
+                                          HTTP1_1);
                     continue;
                 }
 
             FILE *stream = fdopen (client_sockfd, "w");
 
-            code = freehttpd_respond (freehttpd, request, response, stream);
+            if (stream == NULL)
+                {
+                    log_err (LOG_ERR "failed to open stream\n");
+                    freehttpd_send_error (
+                        freehttpd, NULL, client_sockfd,
+                        FREEHTTPD_STATUS_INTERNAL_SERVER_ERROR,
+                        request->version);
+                    freehttpd_request_free (request);
+                    close (client_sockfd);
+                    continue;
+                }
+
+            freehttpd_response_t *response = freehttpd_response_init (
+                stream, request->version, request->version_length,
+                FREEHTTPD_STATUS_OK);
+
+            if (response == NULL)
+                {
+                    log_err (LOG_ERR "failed to init response\n");
+                    freehttpd_send_error (
+                        freehttpd, NULL, client_sockfd,
+                        FREEHTTPD_STATUS_INTERNAL_SERVER_ERROR,
+                        request->version);
+                    freehttpd_request_free (request);
+                    close (client_sockfd);
+                    continue;
+                }
+
+            code = freehttpd_respond_http1x (freehttpd, request, response);
 
             log_msg (LOG_INFO "%s %s HTTP/%s - %d %s\n", request->method,
                      request->uri, request->version, response->status.code,

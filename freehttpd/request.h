@@ -41,6 +41,10 @@ freehttpd_request_t *freehttpd_request_parse (freehttpd_t *freehttpd,
 freehttpd_header_t *freehttpd_header_init (const char *name, const char *value,
                                            size_t name_length,
                                            size_t value_length);
+freehttpd_header_t freehttpd_header_init_stack (const char *name,
+                                                const char *value,
+                                                size_t name_length,
+                                                size_t value_length);
 void freehttpd_header_free (freehttpd_header_t *header);
 
 #endif

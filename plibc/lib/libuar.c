@@ -1,3 +1,5 @@
+#define _PLIBC_INTERNALS
+
 #include "malloc.h"
 #include "stdio.h"
 #include "syscalls.h"
@@ -13,10 +15,8 @@ libuar_deinit ()
 }
 
 int
-_c_start (int argc, char **argv)
+_c_start (int argc __attribute_maybe_unused__,
+          char **argv __attribute_maybe_unused__)
 {
-    int *p = malloc (sizeof (int));
-    *p = 42;
-    printf ("Hello, world! %d\n", *p);
     return 0;
 }

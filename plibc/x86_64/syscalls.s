@@ -53,4 +53,11 @@ sysinfo:
     syscall
     ret
 
+.global kill
+.type kill, @function
+
+kill:
+    mov $62, %rax
+    syscall
+
 .section .note.GNU-stack,"",@progbits

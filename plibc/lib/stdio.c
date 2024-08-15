@@ -11,6 +11,7 @@ enum printf_size
     PS_DEFAULT,
     PS_LONG,
     PS_LONG_LONG,
+    PS_SIZE_T,
 };
 
 int
@@ -64,6 +65,11 @@ printf_internal (const char *fmt, long long int *argp,
                     size_modifier = PS_LONG;
                     fmt++;
                 }
+            else if (*fmt == 'z')
+                {
+                    size_modifier = PS_SIZE_T;
+                    fmt++;
+                }
 
             if (*fmt == 'l' && size_modifier == PS_LONG)
                 {
@@ -105,6 +111,7 @@ printf_internal (const char *fmt, long long int *argp,
                                 break;
 
                             case PS_LONG_LONG:
+                            case PS_SIZE_T:
                                 num = *(long long *) p;
                                 break;
                             }
@@ -160,6 +167,10 @@ printf_internal (const char *fmt, long long int *argp,
                             case PS_LONG_LONG:
                                 num = *(unsigned long long *) p;
                                 break;
+
+                            case PS_SIZE_T:
+                                num = *(size_t *) p;
+                                break;
                             }
 
                         argc++;
@@ -211,6 +222,7 @@ printf_internal (const char *fmt, long long int *argp,
                                         break;
 
                                     case PS_LONG_LONG:
+                                    case PS_SIZE_T:
                                         num = *(unsigned long long *) p;
                                         break;
                                     }

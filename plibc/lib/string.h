@@ -1,5 +1,5 @@
-#ifndef LIBUAR_STRING_H
-#define LIBUAR_STRING_H
+#ifndef PLIBC_STRING_H
+#define PLIBC_STRING_H
 
 #include <stddef.h>
 
@@ -14,4 +14,4 @@ strlen (const char *str)
     return len;
 }
 
-#endif /* LIBUAR_STRING_H */
+#endif /* PLIBC_STRING_H */

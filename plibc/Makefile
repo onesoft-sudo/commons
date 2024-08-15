@@ -1,34 +1,34 @@
-ARCH_LIST = x86_64 armv7l aarch64
-AS = as
-CC = gcc
-CFLAGS = -g -Wall -Wextra -Werror -std=c99 -pedantic -O2
-LDFLAGS = -g -static -nostdlib -nostartfiles -e _start -ffreestanding
-LIB = lib/libuar.a
-ASFLAGS = -g
-BIN = uar-asm
+ARCH_LIST = x86_64
+LIB = lib/libc.a
+BIN = bin-exec
 
-all: lib $(ARCH_LIST)
+export AS = as
+export CC = gcc
+export CFLAGS = -g -Wall -Wextra -Werror -std=c99 -pedantic -O2 -static -nostdlib -nostartfiles -ffreestanding
+export LDFLAGS = -g -static -nostdlib -nostartfiles -e _start -ffreestanding
+export ASFLAGS = -g
+export RM = rm -f
 
+all: $(BIN)
+
+$(BIN): $(ARCH_LIST) lib
+	@echo "  CCLD   $@"
+	$(CC) $(LDFLAGS) -o $@ $(patsubst %,%/*.o,$(ARCH_LIST)) $(LIB)
+	
 lib:
 	$(MAKE) -C lib
 
-.PHONY: lib
+.PHONY: lib $(ARCH_LIST) $(BIN)
 
-x86_64: $(BIN)-x86_64
-
-armv7l: $(BIN)-armv7l
-
-aarch64: $(BIN)-aarch64
-
-$(BIN)-x86_64: x86_64/main.o x86_64/stdio.o x86_64/syscalls.o $(LIB)
-	$(CC) $(LDFLAGS) -o $@ $^
-
-$(BIN)-armv7l: armv7l/$(BIN)-armv7l.o $(LIB)
-	$(CC) $(LDFLAGS) -o $@ $^
-
-$(BIN)-aarch64: aarch64/$(BIN)-aarch64.o $(LIB)
-	$(CC) $(LDFLAGS) -o $@ $^
+$(ARCH_LIST):
+	$(MAKE) -C $@
 
 clean:
-	rm -f *.o $(patsubst %,%/*.o,$(ARCH_LIST))
+	$(RM) *.o $(patsubst %,%/*.o,$(ARCH_LIST))
 	$(MAKE) -C lib clean
+
+	for dir in $(ARCH_LIST); do \
+		if [ -f $$dir/Makefile ]; then \
+			$(MAKE) -C $$dir clean; \
+		fi; \
+	done

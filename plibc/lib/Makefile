@@ -1,20 +1,29 @@
-LIB = libuar.a
+LIB = libc.a
 OBJECTS = libuar.o stdio.o malloc.o
-CFLAGS = -g -Wall -Wextra -std=c99 -pedantic -O2 -static -nostdlib -nostartfiles -ffreestanding
+CFLAGS = -g -Wall -Wextra -Werror -std=c99 -pedantic -O2 -static -nostdlib -nostartfiles -ffreestanding
 CC = gcc
 AR = ar
 RANLIB = ranlib
 RM = rm -f
-LDFLAGS = -g
+LDFLAGS = -g  -static -nostdlib -nostartfiles -ffreestanding
 
 all: $(LIB)
 
 $(LIB): $(OBJECTS)
-	$(AR) rcs $@ $^
-	$(RANLIB) $@
+	@echo "  AR     $@"
+	@$(AR) rcs $@ $^
+	@echo "  RANLIB $@"
+	@$(RANLIB) $@
 
 %.o: %.c
-	$(CC) $(CFLAGS) -c -o $@ $<
+	@echo "  CC     $@"
+	@$(CC) $(CFLAGS) -c -o $@ $<
 
 clean:
-	$(RM) $(OBJECTS) $(LIB)
+	@echo "  RM     $(LIB)"
+	@$(RM) $(LIB)
+
+	@for file in *.o; do \
+		echo "  RM     $$file"; \
+		$(RM) $$file; \
+	done

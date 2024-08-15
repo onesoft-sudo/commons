@@ -1,5 +1,5 @@
-#ifndef LIBUAR_STDIO_H
-#define LIBUAR_STDIO_H
+#ifndef PLIBC_STDIO_H
+#define PLIBC_STDIO_H
 
 #include "format.h"
 
@@ -10,4 +10,4 @@ int puts (const char *str);
 int putsnl (const char *str);
 extern int putchar (int c);
 
-#endif /* LIBUAR_STDIO_H */
+#endif /* PLIBC_STDIO_H */

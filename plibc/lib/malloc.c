@@ -1,10 +1,9 @@
 #include "malloc.h"
 #include "stdio.h"
 #include "syscalls.h"
+#include "utils.h"
 #include <stdbool.h>
 #include <stddef.h>
-
-#define __noreturn __attribute__ ((noreturn))
 
 struct malloc_chunk
 {
@@ -12,132 +11,294 @@ struct malloc_chunk
     void *ptr;
     struct malloc_chunk *next;
     struct malloc_chunk *prev;
+    bool free;
 };
 
 static struct malloc_chunk *head = NULL;
 static struct malloc_chunk *tail = NULL;
 
+static struct malloc_chunk *free_chunk_head = NULL;
+static struct malloc_chunk *free_chunk_tail = NULL;
+static size_t free_chunk_count = 0;
+
 static void *init_mbrk = NULL;
-static void *mbrk = NULL;
 
 static void
 malloc_init ()
 {
-    mbrk = brk ();
-    init_mbrk = mbrk;
+    init_mbrk = brk ();
 }
 
-void __noreturn
-abort ()
+static void *
+unfree (struct malloc_chunk *chunk)
 {
-    write (1, "Aborted\n", 8);
-    exit (-1);
+    if (chunk->prev != NULL)
+        chunk->prev->next = chunk->next;
+
+    if (chunk->next != NULL)
+        chunk->next->prev = chunk->prev;
+
+    if (chunk == head)
+        head = chunk->next;
+
+    if (chunk == tail)
+        tail = chunk->prev;
+
+    if (free_chunk_head == chunk)
+        free_chunk_head = chunk->next;
+
+    if (free_chunk_tail == chunk)
+        free_chunk_tail = chunk->prev;
+
+    if (chunk->free)
+        free_chunk_count--;
+
+    chunk->free = false;
+    return chunk->ptr;
 }
 
-#define PROT_READ 1
-#define PROT_WRITE 2
-#define MAP_PRIVATE 2
-#define MAP_ANONYMOUS 0x20
-#define MMAP_FAILED ((void *) -1)
-
-static long long int
-get_page_size ()
+static void
+reduce_brk ()
 {
-    unsigned char *sysinfo_struct;
+    if (free_chunk_count <= 3)
+        return;
 
-    if (sysinfo (&sysinfo_struct) < 0)
-        abort ();
+    struct malloc_chunk *chunk = free_chunk_tail;
+    intptr_t lowest_brk = 0;
+    void *b = brk ();
 
-    return *(long long int *) (sysinfo_struct + 8);
-}
+    while (chunk != NULL)
+        {
+            if (tail >= chunk || !chunk->free
+                || (lowest_brk != 0 && lowest_brk < (intptr_t) chunk)
+                || (intptr_t) b < (intptr_t) chunk)
+                {
+                    chunk = chunk->prev;
+                    continue;
+                }
 
-static struct malloc_chunk *
-new_chunk (size_t size, void *ptr)
-{
-    size_t aligned_size = 4096;
-    printf ("Size: %lu\n", aligned_size);
+            if (chunk->prev != NULL)
+                chunk->prev->next = chunk->next;
 
-    char *data
-        = mmap (NULL, aligned_size * sizeof (struct malloc_chunk),
-                PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+            if (chunk->next != NULL)
+                chunk->next->prev = chunk->prev;
 
-    if (data == MMAP_FAILED || data == NULL)
-        return NULL;
+            if (chunk == free_chunk_head)
+                free_chunk_head = chunk->next;
 
-    printf ("new_chunk: mmap() successful\n");
-    printf ("ptr: %p\n", ptr);
+            if (chunk == free_chunk_tail)
+                free_chunk_tail = chunk->prev;
 
-    data[0] = 0x41;
+            struct malloc_chunk *prev = chunk->prev;
+            lowest_brk = (intptr_t) chunk;
+            chunk = prev;
+        }
 
-    printf ("accessed: %p\n", ptr);
-    return NULL;
+    if (lowest_brk == 0)
+        return;
+
+    if (sbrk ((intptr_t) lowest_brk) == (void *) -1)
+        {
+            printf ("reduce_brk(): sbrk failed\n");
+            abort ();
+        }
 }
 
 void *
 malloc (size_t size)
 {
-    if (mbrk == NULL)
+    reduce_brk ();
+
+    if (size == 0)
+        return NULL;
+
+    if (free_chunk_head != NULL && free_chunk_head->free
+        && free_chunk_head->size >= size)
+        return unfree (free_chunk_head);
+
+    if (free_chunk_tail != NULL && free_chunk_tail->free
+        && free_chunk_tail->size >= size)
+        return unfree (free_chunk_tail);
+
+    struct malloc_chunk *chunk = free_chunk_tail;
+
+    while (chunk != NULL)
+        {
+            if (chunk->free && chunk->size >= size)
+                return unfree (chunk);
+
+            chunk = chunk->prev;
+        }
+
+    if (init_mbrk == NULL)
         malloc_init ();
 
+    size_t mc_size = sizeof (struct malloc_chunk);
     void *b = brk ();
+    intptr_t new_ptr = (intptr_t) (((unsigned char *) b) + size + mc_size);
 
-    if (sbrk ((intptr_t) (((unsigned char *) b) + size)) == (void *) -1)
+    if (sbrk (new_ptr) == (void *) -1)
         return NULL;
 
-    puts ("malloc: brk() successful");
-    struct malloc_chunk *chunk = new_chunk (size, b);
-    puts ("malloc: new_chunk() successful");
+    chunk = (struct malloc_chunk *) b;
+    chunk->size = size;
+    chunk->ptr = (void *) (((unsigned char *) b) + mc_size);
+    chunk->next = NULL;
+    chunk->prev = tail;
+    chunk->free = false;
 
-    if (chunk == NULL)
-        return NULL;
+    tail = chunk;
 
     if (head == NULL)
         head = chunk;
-    else
-        {
-            tail->next = chunk;
-            chunk->prev = tail;
-        }
 
-    tail = chunk;
-    return b;
+    return chunk->ptr;
+}
+
+static void __noreturn
+invalid_ptr (const char *func)
+{
+    printf ("%s(): invalid pointer\n", func);
+    abort ();
+}
+
+static void __noreturn
+double_free (void *ptr, size_t size)
+{
+    printf ("free(): double free detected: %p (block size %zu)\n", ptr, size);
+    abort ();
 }
 
 void
 free (void *ptr)
 {
+    reduce_brk ();
+
+    size_t mc_size = sizeof (struct malloc_chunk);
+    struct malloc_chunk *chunk
+        = (struct malloc_chunk *) (((unsigned char *) ptr) - mc_size);
+
+    if (chunk == NULL)
+        invalid_ptr (__func__);
+
+    if (chunk->ptr != ptr)
+        invalid_ptr (__func__);
+
+    if (chunk->free)
+        double_free (chunk->ptr, chunk->size);
+
+    free_chunk_count++;
+    chunk->free = true;
+
+    if (chunk->prev != NULL)
+        chunk->prev->next = chunk->next;
+
+    if (chunk->next != NULL)
+        chunk->next->prev = chunk->prev;
+
+    if (chunk == head)
+        head = chunk->next;
+
+    if (chunk == tail)
+        tail = chunk->prev;
+
+    if (free_chunk_head == NULL)
+        {
+            free_chunk_head = chunk;
+            free_chunk_tail = chunk;
+            chunk->next = NULL;
+            chunk->prev = NULL;
+        }
+    else
+        {
+            free_chunk_tail->next = chunk;
+            chunk->prev = free_chunk_tail;
+            chunk->next = NULL;
+            free_chunk_tail = chunk;
+        }
+}
+
+void
+bzero (void *ptr, size_t size)
+{
+    for (size_t i = 0; i < size; i++)
+        ((unsigned char *) ptr)[i] = 0;
+}
+
+void *
+calloc (size_t nmemb, size_t size)
+{
+    size_t total_size = nmemb * size;
+    void *ptr = malloc (total_size);
+
     if (ptr == NULL)
+        return NULL;
+
+    bzero (ptr, total_size);
+    return ptr;
+}
+
+void *
+realloc (void *ptr, size_t size)
+{
+    if (ptr == NULL)
+        return malloc (size);
+
+    size_t mc_size = sizeof (struct malloc_chunk);
+    struct malloc_chunk *chunk
+        = (struct malloc_chunk *) (((unsigned char *) ptr) - mc_size);
+
+    if (chunk == NULL)
+        invalid_ptr (__func__);
+
+    if (chunk->ptr != ptr)
+        invalid_ptr (__func__);
+
+    if (chunk->size >= size)
+        return ptr;
+
+    if (tail == chunk)
+        {
+            reduce_brk ();
+
+            size_t new_size = size - chunk->size;
+            void *b = brk ();
+            intptr_t new_ptr = (intptr_t) (((unsigned char *) b) + new_size);
+
+            if (sbrk (new_ptr) == (void *) -1)
+                return NULL;
+
+            chunk->size = size;
+            return ptr;
+        }
+
+    void *new_ptr = malloc (size);
+
+    if (new_ptr == NULL)
+        return NULL;
+
+    for (size_t i = 0; i < chunk->size; i++)
+        ((unsigned char *) new_ptr)[i] = ((unsigned char *) ptr)[i];
+
+    free (ptr);
+    return new_ptr;
+}
+
+void
+__plibc_heap_reset (void)
+{
+    if (init_mbrk == NULL)
         return;
 
-    struct malloc_chunk *chunk = head;
-    bool found = false;
-
-    while (chunk != NULL)
+    if (sbrk ((intptr_t) init_mbrk) == (void *) -1)
         {
-            if (chunk->ptr == ptr)
-                {
-                    if (chunk->prev != NULL)
-                        chunk->prev->next = chunk->next;
-
-                    if (chunk->next != NULL)
-                        chunk->next->prev = chunk->prev;
-
-                    if (chunk == tail)
-                        tail = chunk->prev;
-
-                    if (chunk == head)
-                        head = chunk->next;
-
-                    found = true;
-                    break;
-                }
-
-            chunk = chunk->next;
-        }
-
-    if (!found)
-        {
-            write (1, "free(): invalid pointer\n", 24);
+            printf ("__plibc_heap_reset(): sbrk failed\n");
             abort ();
         }
+
+    head = NULL;
+    tail = NULL;
+    free_chunk_head = NULL;
+    free_chunk_tail = NULL;
+    free_chunk_count = 0;
 }

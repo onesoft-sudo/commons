@@ -1,5 +1,5 @@
-#ifndef LIBUAR_FORMAT_H
-#define LIBUAR_FORMAT_H
+#ifndef PLIBC_FORMAT_H
+#define PLIBC_FORMAT_H
 
 #define PRI_u64 "llu"
 #define PRI_x64 "llx"
@@ -15,4 +15,4 @@
 
 #define PRI_PTR "p"
 
-#endif /* LIBUAR_FORMAT_H */
+#endif /* PLIBC_FORMAT_H */

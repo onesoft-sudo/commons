@@ -4,3 +4,6 @@ uar
 *.so
 .deps
 *~
+*.a
+bin-exec
+*.uar

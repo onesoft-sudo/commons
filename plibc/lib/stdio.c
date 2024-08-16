@@ -1,10 +1,8 @@
 #include "stdio.h"
+#include "malloc.h"
 #include "string.h"
-#include "syscalls.h"
+#include "unistd.h"
 #include <stdbool.h>
-
-#define STDOUT_FILENO 1
-#define STDERR_FILENO 2
 
 enum printf_size
 {
@@ -295,4 +293,155 @@ int
 putchar (int c)
 {
     return write (STDOUT_FILENO, &c, 1);
+}
+
+#define FBUFSIZ 1024
+
+static int
+fmode_to_flags (const char *mode)
+{
+    int flags = 0;
+
+    if (mode[0] == 'r')
+        flags = O_RDONLY;
+    else if (mode[0] == 'w')
+        flags = O_WRONLY | O_CREAT | O_TRUNC;
+    else if (mode[0] == 'a')
+        flags = O_WRONLY | O_CREAT | O_APPEND;
+    else
+        return -1;
+
+    if (mode[1] == '+')
+        {
+            flags &= ~(O_RDONLY | O_WRONLY);
+            flags |= O_RDWR;
+        }
+
+    return flags;
+}
+
+FILE *
+fopen (const char *pathname, const char *mode)
+{
+    int flags = fmode_to_flags (mode);
+
+    if (flags == -1)
+        return NULL;
+
+    int fd = open (pathname, flags);
+
+    if (fd < 0)
+        return NULL;
+
+    FILE *file = malloc (sizeof (FILE));
+
+    if (file == NULL)
+        {
+            close (fd);
+            return NULL;
+        }
+
+    file->fd = fd;
+    file->buf = malloc (FBUFSIZ);
+    file->buf_size = 0;
+    file->mode = flags;
+
+    return file;
+}
+
+int
+fclose (FILE *file)
+{
+    fflush (file);
+
+    int ret = close (file->fd);
+
+    if (ret < 0)
+        return ret;
+
+    free (file->buf);
+    free (file);
+
+    return 0;
+}
+
+size_t
+fwrite (const void *ptr, size_t size, size_t nmemb, FILE *stream)
+{
+    size_t total = size * nmemb;
+    size_t written = 0;
+    char buf[FBUFSIZ];
+
+    while (total)
+        {
+            size_t to_write = total;
+
+            if (to_write > FBUFSIZ)
+                to_write = FBUFSIZ;
+
+            memcpy (buf, ptr, to_write);
+
+            int ret = write (stream->fd, buf, to_write);
+
+            if (ret < 0)
+                return ret;
+
+            total -= to_write;
+            written += to_write;
+        }
+
+    return written;
+}
+
+int
+fputs (const char *str, FILE *stream)
+{
+    while (*str)
+        {
+            ((unsigned char *) stream->buf)[stream->buf_size++] = *str;
+
+            if (stream->buf_size >= FBUFSIZ || *str == '\n')
+                {
+                    int ret = fwrite (stream->buf, 1, stream->buf_size, stream);
+
+                    if (ret < 0)
+                        return ret;
+
+                    stream->buf_size = 0;
+                }
+
+            str++;
+        }
+
+    return 0;
+}
+
+int
+fflush (FILE *stream)
+{
+    if (stream->buf_size == 0)
+        return 0;
+
+    return fwrite (stream->buf, 1, stream->buf_size, stream);
+}
+
+FILE *
+fdopen (int fd, const char *mode)
+{
+    int flags = fmode_to_flags (mode);
+
+    if (flags == -1)
+        return NULL;
+
+    FILE *file = malloc (sizeof (FILE));
+
+    if (file == NULL)
+        return NULL;
+
+    file->fd = fd;
+    file->buf = malloc (FBUFSIZ);
+    file->buf_size = 0;
+    file->mode = flags;
+
+    return file;
 }

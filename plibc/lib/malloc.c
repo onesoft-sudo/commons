@@ -1,9 +1,9 @@
 #include "malloc.h"
+#include "stddef.h"
 #include "stdio.h"
-#include "syscalls.h"
+#include "unistd.h"
 #include "utils.h"
 #include <stdbool.h>
-#include <stddef.h>
 
 struct malloc_chunk
 {

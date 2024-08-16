@@ -9,16 +9,12 @@ export LDFLAGS = -g -static -nostdlib -nostartfiles -e _start -ffreestanding
 export ASFLAGS = -g
 export RM = rm -f
 
-all: $(BIN)
-
-$(BIN): $(ARCH_LIST) lib
-	@echo "  CCLD   $@"
-	$(CC) $(LDFLAGS) -o $@ $(patsubst %,%/*.o,$(ARCH_LIST)) $(LIB)
+all: $(ARCH_LIST) lib
 	
 lib:
 	$(MAKE) -C lib
 
-.PHONY: lib $(ARCH_LIST) $(BIN)
+.PHONY: lib $(ARCH_LIST)
 
 $(ARCH_LIST):
 	$(MAKE) -C $@

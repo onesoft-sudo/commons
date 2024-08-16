@@ -1,5 +1,5 @@
 LIB = libc.a
-OBJECTS = libuar.o stdio.o malloc.o
+OBJECTS = stdio.o malloc.o errno.o unistd.o string.o
 CFLAGS = -g -Wall -Wextra -Werror -std=c99 -pedantic -O2 -static -nostdlib -nostartfiles -ffreestanding
 CC = gcc
 AR = ar

@@ -6,6 +6,8 @@ LIB = lib$(ARCH).a
 all: $(ARCH)
 
 $(ARCH): $(OBJECTS)
+	@echo "  AR    $(LIB)"
+	@$(AR) rcs $(LIB) $(OBJECTS)
 
 %.o: %.s
 	@echo "  AS     $@"

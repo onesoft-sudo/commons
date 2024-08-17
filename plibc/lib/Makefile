@@ -1,6 +1,6 @@
 LIB = libc.a
-OBJECTS = stdio.o malloc.o errno.o unistd.o string.o
-CFLAGS = -g -Wall -Wextra -Werror -std=c99 -pedantic -O2 -static -nostdlib -nostartfiles -ffreestanding
+OBJECTS = stdio.o malloc.o errno.o unistd.o string.o boot.o stdlib.o
+CFLAGS = -g -I. -Wall -Wextra -Werror -std=c99 -pedantic -O2 -static -nostdlib -nostartfiles -ffreestanding
 CC = gcc
 AR = ar
 RANLIB = ranlib

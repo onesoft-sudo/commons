@@ -2,7 +2,7 @@
 #define PLIBC_SYSCALLS_H
 
 #include "stddef.h"
-#include <stdint.h>
+#include "stdint.h"
 #include <sys/types.h>
 
 extern int sys_write (int fd, const void *buf, size_t count);

@@ -1,8 +1,8 @@
 #include "stdio.h"
 #include "malloc.h"
+#include "stdbool.h"
 #include "string.h"
 #include "unistd.h"
-#include <stdbool.h>
 
 enum printf_size
 {
@@ -320,37 +320,47 @@ fmode_to_flags (const char *mode)
     return flags;
 }
 
-FILE *
-fopen (const char *pathname, const char *mode)
+bool
+_plibc_fopen_internal (FILE *file, const char *pathname, const char *mode)
 {
     int flags = fmode_to_flags (mode);
 
     if (flags == -1)
-        return NULL;
+        return false;
 
     int fd = open (pathname, flags);
 
     if (fd < 0)
-        return NULL;
-
-    FILE *file = malloc (sizeof (FILE));
-
-    if (file == NULL)
-        {
-            close (fd);
-            return NULL;
-        }
+        return false;
 
     file->fd = fd;
     file->buf = malloc (FBUFSIZ);
     file->buf_size = 0;
     file->mode = flags;
 
+    return true;
+}
+
+FILE *
+fopen (const char *pathname, const char *mode)
+{
+
+    FILE *file = malloc (sizeof (FILE));
+
+    if (file == NULL)
+        return NULL;
+
+    if (!_plibc_fopen_internal (file, pathname, mode))
+        {
+            free (file);
+            return NULL;
+        }
+
     return file;
 }
 
 int
-fclose (FILE *file)
+_plibc_fclose_internal (FILE *file)
 {
     fflush (file);
 
@@ -360,9 +370,18 @@ fclose (FILE *file)
         return ret;
 
     free (file->buf);
-    free (file);
-
     return 0;
+}
+
+int
+fclose (FILE *file)
+{
+    if (file == NULL)
+        return -1;
+
+    int ret = _plibc_fclose_internal (file);
+    free (file);
+    return ret;
 }
 
 size_t
@@ -425,23 +444,35 @@ fflush (FILE *stream)
     return fwrite (stream->buf, 1, stream->buf_size, stream);
 }
 
-FILE *
-fdopen (int fd, const char *mode)
+bool
+_plibc_fdopen_internal (FILE *file, int fd, const char *mode)
 {
     int flags = fmode_to_flags (mode);
 
     if (flags == -1)
-        return NULL;
-
-    FILE *file = malloc (sizeof (FILE));
-
-    if (file == NULL)
-        return NULL;
+        return false;
 
     file->fd = fd;
     file->buf = malloc (FBUFSIZ);
     file->buf_size = 0;
     file->mode = flags;
+
+    return true;
+}
+
+FILE *
+fdopen (int fd, const char *mode)
+{
+    FILE *file = malloc (sizeof (FILE));
+
+    if (file == NULL)
+        return NULL;
+
+    if (!_plibc_fdopen_internal (file, fd, mode))
+        {
+            free (file);
+            return NULL;
+        }
 
     return file;
 }

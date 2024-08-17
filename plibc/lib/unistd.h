@@ -2,8 +2,8 @@
 #define PLIBC_UNISTD_H
 
 #include "stddef.h"
-#include <stdint.h>
-#include <sys/types.h>
+#include "stdint.h"
+#include "sys/types.h"
 
 #define STDIN_FILENO 0
 #define STDOUT_FILENO 1
@@ -22,7 +22,6 @@ int close (int fd);
 
 void *sbrk (intptr_t increment);
 void *brk (void);
-void __attribute__ ((noreturn)) exit (int status);
 void *mmap (void *addr, size_t len, int prot, int flags, int fd, off_t offset);
 void *sysinfo (void *buffer);
 int kill (pid_t pid, int sig);

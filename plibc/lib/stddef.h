@@ -4,8 +4,6 @@
 typedef long int ptrdiff_t;
 typedef unsigned long int size_t;
 typedef long int ssize_t;
-typedef long int off_t;
-typedef long int intptr_t;
 
 #define NULL ((void *) 0)
 

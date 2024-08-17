@@ -7,12 +7,14 @@ plibc_init:
     call get_errno_location
     xorl %edi, %edi
     movl %edi, (%rax)
+    call plibc_init_resources
     ret
 
 .globl plibc_deinit
 .type plibc_deinit, @function
 
 plibc_deinit:
+    call plibc_deinit_resources
     ret
 
 .globl plibc_deinit_sfds

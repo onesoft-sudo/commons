@@ -14,6 +14,10 @@ typedef struct
     int mode;
 } FILE;
 
+#define stdin ((FILE *) _iobuf)
+#define stdout ((FILE *) (_iobuf + 1))
+#define stderr ((FILE *) (_iobuf + 2))
+
 extern int printf (const char *fmt, ...)
     __attribute__ ((format (printf, 1, 2)));
 
@@ -27,5 +31,7 @@ int fclose (FILE *stream);
 int fflush (FILE *stream);
 int fputs (const char *str, FILE *stream);
 FILE *fdopen (int fd, const char *mode);
+
+extern FILE _iobuf[3];
 
 #endif /* PLIBC_STDIO_H */

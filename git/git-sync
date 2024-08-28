@@ -1,0 +1,55 @@
+#! /bin/sh
+
+version="1.0.0"
+me=git-sync
+
+show_help() {
+    echo "Usage: git sync [options] [args]..."
+    echo "       $me [options] [args]..."
+    echo ""
+    echo "Synchronize local changes with remote and vise-versa."
+    echo ""
+    echo "Options:"
+    echo "  --help      Show this help and exit"
+    echo "  --version   Output version information and exit"
+    echo ""
+    echo "Bug reports and questions should be sent to <commons@onesoftnet.eu.org>."
+}
+
+show_version() {
+    cat <<EOF
+$me (OSN Commons) v$version
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+Written by Ar Rakin.
+EOF
+}
+
+for arg in "$@"; do
+    case "$arg" in
+	--help)
+	    show_help
+	    exit 0
+	    ;;
+
+	--version)
+	    show_version
+	    exit 0
+	    ;;
+    esac
+done
+
+git pull $@
+
+code="$?"
+
+if [ "$code" -ne 0 ]; then
+    exit "$code"
+fi
+
+git push $@
+exit $?

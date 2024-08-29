@@ -163,6 +163,41 @@ function parseGitLog(gitLog) {
     return commits;
 }
 
+function generateMarkdownChangelog(commits) {
+    let output = "# Changelog\n\n";
+
+    const grouppedCommitsByDate = {};
+
+    for (const commit of commits) {
+        const key = `${commit.createdAt
+            .getUTCDate()
+            .toString()
+            .padStart(2, 0)}-${(commit.createdAt.getUTCMonth() + 1)
+            .toString()
+            .padStart(2, "0")}-${commit.createdAt.getUTCFullYear()}::${
+            Array.isArray(commit.author)
+                ? commit.author.join(":")
+                : commit.author
+        }`;
+        grouppedCommitsByDate[key] ??= [];
+        grouppedCommitsByDate[key].push(commit);
+    }
+
+    for (const key in grouppedCommitsByDate) {
+        const [date, author] = key.split("::");
+        output += `### ${date} [${author}]\n\n`;
+
+        for (const commit of grouppedCommitsByDate[key]) {
+            const newLineIndex = commit.message.indexOf("\n");
+            output += `* ${commit.message.slice(0, newLineIndex === -1 ? undefined : newLineIndex)}\n`;
+        }
+
+        output += "\n";
+    }
+
+    return output;
+}
+
 function generateChangelog(commits) {
     let output = "";
 
@@ -213,7 +248,10 @@ function printHelp() {
     console.log("Options:");
     console.log("  -h, --help           Show this help and exit.");
     console.log("  -v, --version        Show this script's version.");
-    console.log("  -o, --output=[FILE]  Write the generated changelog to");
+    console.log("  -f, --format=        Set the changelog format.");
+    console.log("                       Supported formats are: plain,");
+    console.log("                       markdown.");
+    console.log("  -o, --output=<FILE>  Write the generated changelog to");
     console.log("                       a file instead of standard output.");
     console.log("      --no-overwrite   Disallow overwriting of the output");
     console.log("                       file if it exists already.");
@@ -259,6 +297,10 @@ async function main() {
                 "no-overwrite": {
                     type: "boolean",
                 },
+                format: {
+                    type: "string",
+                    short: "f"
+                }
             },
         }).values;
     } catch (error) {
@@ -274,6 +316,11 @@ async function main() {
     if (options.version) {
         printVersion();
         exit(0);
+    }
+
+    if (options.format && !["markdown", "plain"].includes(options.format)) {
+        perror("option `--format` or `-f` only accepts one of the following: markdown, plain");
+        exit(1);
     }
 
     if (!options.output && options["no-overwrite"]) {
@@ -301,7 +348,7 @@ async function main() {
                 commit.message
             )
     );
-    const changelog = generateChangelog(filteredCommits);
+    const changelog = options.format === "markdown" ? generateMarkdownChangelog(filteredCommits) : generateChangelog(filteredCommits);
 
     if (options.output) {
         try {

@@ -22,7 +22,7 @@
 const path = require("path");
 const { existsSync } = require("fs");
 const { exit } = require("process");
-const { execSync } = require("child_process");
+const { execSync, exec, spawn } = require("child_process");
 const { writeFile } = require("fs/promises");
 const { parseArgs } = require("util");
 const crypto = require("crypto");
@@ -68,14 +68,42 @@ function checkForGit() {
     return gitPath;
 }
 
-function getGitLog(gitPath) {
+async function getGitLog(gitPath) {
     try {
-        return execSync(
-            gitPath +
-                ` --no-pager log --pretty=format:"%h %H %an${GIT_SPACE_BOUNDARY} %ae %ad${GIT_SPACE_BOUNDARY} %B${GIT_COMMIT_BOUNDARY}"`,
-            { encoding: "utf8" },
+        let output = "";
+
+        const child = spawn(
+            gitPath,
+            [
+                "--no-pager",
+                "log",
+                `--pretty=format:%h %H %an${GIT_SPACE_BOUNDARY} %ae %ad${GIT_SPACE_BOUNDARY} %B${GIT_COMMIT_BOUNDARY}`,
+            ],
+            { encoding: "utf8", stdio: "pipe" },
         );
-    } catch {
+
+        child.stdout.on("data", (data) => {
+            output += data;
+        });
+
+        child.stderr.on("data", (data) => {
+            console.error(data);
+        });
+
+        await new Promise((resolve) => {
+            child.on("close", (code) => {
+                if (code !== 0) {
+                    perror("command `git log' failed with exit code " + code);
+                    exit(1);
+                } else {
+                    resolve();
+                }
+            });
+        });
+
+        return output;
+    } catch (error) {
+        console.error(error);
         perror("command `git log' failed");
         exit(1);
     }
@@ -428,7 +456,7 @@ async function main() {
     }
 
     const gitPath = checkForGit();
-    const gitLog = getGitLog(gitPath);
+    const gitLog = await getGitLog(gitPath);
     const commits = parseGitLog(gitLog);
     const filteredCommits = commits.filter(
         (commit) =>

@@ -25,8 +25,11 @@ const { exit } = require("process");
 const { execSync } = require("child_process");
 const { writeFile } = require("fs/promises");
 const { parseArgs } = require("util");
+const crypto = require("crypto");
 
 const ME = path.basename(process.argv[1]);
+const GIT_COMMIT_BOUNDARY = crypto.randomBytes(64).toString("hex");
+const GIT_SPACE_BOUNDARY = crypto.randomBytes(64).toString("hex");
 
 function print(...args) {
     console.log(`${ME}: ${args.join(" ")}`);
@@ -38,11 +41,11 @@ function perror(...args) {
 
 function findInPath(executable) {
     for (const segment of process.env.PATH?.split(
-        process.platform === "win32" ? ";" : ":"
+        process.platform === "win32" ? ";" : ":",
     ) ?? []) {
         const executablePath = path.join(
             segment,
-            executable + (process.platform === "win32" ? ".exe" : "")
+            executable + (process.platform === "win32" ? ".exe" : ""),
         );
 
         if (existsSync(executablePath)) {
@@ -67,100 +70,151 @@ function checkForGit() {
 
 function getGitLog(gitPath) {
     try {
-        return execSync(gitPath + " --no-pager log", { encoding: "utf8" });
+        return execSync(
+            gitPath +
+                ` --no-pager log --pretty=format:"%h %H %an${GIT_SPACE_BOUNDARY} %ae %ad${GIT_SPACE_BOUNDARY} %B${GIT_COMMIT_BOUNDARY}"`,
+            { encoding: "utf8" },
+        );
     } catch {
-        perror("command `git --no-pager log' failed");
+        perror("command `git log' failed");
         exit(1);
     }
 }
 
-function parseGitLog(gitLog) {
-    const lines = gitLog.split("\n");
-    const commits = [];
+function strUntil(str, boundary) {
+    let output = "";
+    let i = 0;
 
-    for (let i = 0; i < lines.length; ) {
-        if (!lines[i].startsWith("commit")) {
-            i++;
-            continue;
-        }
+    for (i = 0; i < str.length; i++) {
+        if (str[i] === boundary[0]) {
+            let boundaryIndex = 0;
+            let previousI = i;
 
-        const [, hash] = lines[i++].split(" ");
-        const headerProps = {};
-
-        while (
-            i < lines.length &&
-            lines[i].trim() !== "" &&
-            !/^\s/.test(lines[i])
-        ) {
-            const colonIndex = lines[i].indexOf(":");
-            const name = lines[i].slice(0, colonIndex).toLowerCase();
-            const value = lines[i].slice(colonIndex + 1).trim();
-            headerProps[name] = value;
-            i++;
-        }
-
-        const messageLines = [];
-
-        while (i < lines.length && !lines[i].startsWith("commit")) {
-            const lineToPush = lines[i++].replace(/^    /, "");
-
-            if (!lineToPush) {
-                continue;
+            while (
+                boundaryIndex < boundary.length &&
+                i < str.length &&
+                str[i] === boundary[boundaryIndex]
+            ) {
+                i++;
+                boundaryIndex++;
             }
 
-            messageLines.push(lineToPush);
+            if (boundaryIndex === boundary.length) {
+                return { output, size: i };
+            }
+
+            i = previousI;
         }
 
-        let mindex = messageLines.length - 1;
-        const footerProps = {};
+        output += str[i];
+    }
+
+    return { output, size: i };
+}
+
+function parseGitLog(gitLog) {
+    const commits = [];
+
+    let i = 0;
+
+    while (i < gitLog.length) {
+        const { output, size } = strUntil(gitLog.slice(i), GIT_COMMIT_BOUNDARY);
+        i += size;
+
+        let outputIndex = 0;
+
+        const shortIdSpaceIndex = output.indexOf(" ");
+        const idSpaceIndex = output.indexOf(" ", shortIdSpaceIndex + 1);
+        const shortId = output.slice(outputIndex, shortIdSpaceIndex);
+        const id = output.slice(shortIdSpaceIndex + 1, idSpaceIndex);
+
+        outputIndex += shortId.length + id.length + 2;
+
+        const { output: authorName, size: authorNameSize } = strUntil(
+            output.slice(outputIndex),
+            GIT_SPACE_BOUNDARY,
+        );
+
+        outputIndex += authorNameSize + 1;
+
+        const authorEmailSpaceIndex = output.indexOf(" ", outputIndex + 1);
+        const authorEmail = output.slice(outputIndex, authorEmailSpaceIndex);
+
+        outputIndex += authorEmail.length + 1;
+
+        const { output: date, size: dateSize } = strUntil(
+            output.slice(outputIndex),
+            GIT_SPACE_BOUNDARY,
+        );
+
+        outputIndex += dateSize + 1;
+
+        const message = output.slice(outputIndex);
+        const newlineIndex = message.indexOf("\n");
+        const subject = message.slice(
+            0,
+            newlineIndex === -1 ? undefined : newlineIndex,
+        );
+        const body = newlineIndex === -1 ? "" : message.slice(newlineIndex + 1);
+
         const validFooterProps = [
             "signed-off-by",
             "co-authored-by",
             "on-behalf-of",
         ];
+        const footerProps = {};
+        const coAuthors = [];
 
-        while (
-            mindex >= 1 &&
-            /^[A-Za-z0-9-]+: /.test(messageLines.at(mindex))
-        ) {
-            const messageLine = messageLines[mindex--];
-            const colonIndex = messageLine.indexOf(":");
-            const name = messageLine.slice(0, colonIndex).toLowerCase();
+        for (const line of body.split("\n")) {
+            const colonIndex = line.indexOf(":");
+            const key = line.slice(0, colonIndex).trim().toLowerCase();
+            const value = line.slice(colonIndex + 1).trim();
 
-            if (!validFooterProps.includes(name)) {
-                continue;
+            if (validFooterProps.includes(key)) {
+                footerProps[key] = value;
             }
 
-            const value = messageLine.slice(colonIndex + 1).trim();
+            if (key === "co-authored-by") {
+                const name = value.slice(0, value.lastIndexOf(" ")).trim();
 
-            if (name in footerProps && !Array.isArray(footerProps[name])) {
-                footerProps[name] = [footerProps[name]];
+                coAuthors.push({
+                    name,
+                    email: value
+                        .slice(name.length)
+                        .trim()
+                        .replace(/^<|>$/g, ""),
+                });
             }
-
-            if (Array.isArray(footerProps[name])) {
-                footerProps[name].push(value);
-            } else {
-                footerProps[name] = value;
-            }
-
-            messageLines.splice(mindex - 1, 1);
         }
 
-        const message = messageLines.join("\n");
-
         commits.push({
-            hash,
-            message,
-            headerProps,
+            shortId,
+            id,
+            author: {
+                name: authorName,
+                email: authorEmail,
+            },
+            date: new Date(date),
+            subject,
+            body,
             footerProps,
-            signedOffBy: footerProps["signed-off-by"],
-            onBehalfOf: footerProps["on-behalf-of"],
-            author: headerProps["author"],
-            createdAt: new Date(headerProps["date"]),
+            message,
+            coAuthors,
+            authors: [
+                {
+                    name: authorName,
+                    email: authorEmail,
+                },
+                ...coAuthors,
+            ],
         });
     }
 
     return commits;
+}
+
+function escapeMarkdown(str) {
+    return str.replace(/([_*~`])/g, "\\$1");
 }
 
 function generateMarkdownChangelog(commits) {
@@ -169,33 +223,69 @@ function generateMarkdownChangelog(commits) {
     const grouppedCommitsByDate = {};
 
     for (const commit of commits) {
-        const key = `${commit.createdAt
-            .getUTCDate()
+        const key = `${commit.date.getUTCDate().toString().padStart(2, 0)}-${(
+            commit.date.getUTCMonth() + 1
+        )
             .toString()
-            .padStart(2, 0)}-${(commit.createdAt.getUTCMonth() + 1)
-            .toString()
-            .padStart(2, "0")}-${commit.createdAt.getUTCFullYear()}::${
-            Array.isArray(commit.author)
-                ? commit.author.join(":")
-                : commit.author
-        }`;
+            .padStart(2, "0")}-${commit.date.getUTCFullYear()}::${commit.authors
+            .map((a) => `[${escapeMarkdown(a.name)}](mailto:${a.email})`)
+            .join(":")}`;
         grouppedCommitsByDate[key] ??= [];
         grouppedCommitsByDate[key].push(commit);
     }
 
     for (const key in grouppedCommitsByDate) {
         const [date, author] = key.split("::");
-        output += `### ${date} [${author}]\n\n`;
+        output += `### ${date} - [${author}]\n\n`;
 
         for (const commit of grouppedCommitsByDate[key]) {
-            const newLineIndex = commit.message.indexOf("\n");
-            output += `* ${commit.message.slice(0, newLineIndex === -1 ? undefined : newLineIndex)}\n`;
+            const conventionalCommitType = commit.subject.match(
+                /^(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test|release|deps)(\(.+\))?:/,
+            );
+            let needsBreakingChangeWarning = conventionalCommitType?.[0]
+                ?.trim()
+                ?.endsWith("!:");
+
+            if (conventionalCommitType) {
+                output += `  * **${conventionalCommitType[0]}**${commit.subject.slice(conventionalCommitType[0].length)}`;
+            } else {
+                output += `  * ${commit.subject}`;
+            }
+
+            if (commit.body) {
+                output += "    \n";
+
+                for (const line of commit.body.split("\n")) {
+                    const colonIndex = line.indexOf(":");
+
+                    if (colonIndex !== -1) {
+                        const name = line.slice(0, colonIndex);
+                        const value = line.slice(colonIndex + 1);
+                        output += `    **${name}:** ${value}  \n`;
+
+                        if (name === "BREAKING CHANGE") {
+                            needsBreakingChangeWarning = false;
+                        }
+                    } else {
+                        output += `    ${line}  \n`;
+                    }
+                }
+            }
+
+            if (needsBreakingChangeWarning) {
+                output += "    **This is a breaking change.**  \n";
+                output += "    \n";
+            }
+
+            if (!commit.body && !needsBreakingChangeWarning) {
+                output += "\n";
+            }
         }
 
         output += "\n";
     }
 
-    return output;
+    return output.trimEnd();
 }
 
 function generateChangelog(commits) {
@@ -204,16 +294,14 @@ function generateChangelog(commits) {
     const grouppedCommitsByDate = {};
 
     for (const commit of commits) {
-        const key = `${commit.createdAt
-            .getUTCDate()
+        const key = `${commit.date.getUTCDate().toString().padStart(2, 0)}-${(
+            commit.date.getUTCMonth() + 1
+        )
             .toString()
-            .padStart(2, 0)}-${(commit.createdAt.getUTCMonth() + 1)
-            .toString()
-            .padStart(2, "0")}-${commit.createdAt.getUTCFullYear()}::${
-            Array.isArray(commit.author)
-                ? commit.author.join(":")
-                : commit.author
-        }`;
+            .padStart(
+                2,
+                "0",
+            )}-${commit.date.getUTCFullYear()}::${commit.authors.map((a) => `${a.name} <${a.email}>`).join(":")}`;
         grouppedCommitsByDate[key] ??= [];
         grouppedCommitsByDate[key].push(commit);
     }
@@ -223,17 +311,15 @@ function generateChangelog(commits) {
         const date = key.slice(0, separatorPosition);
         const commits = grouppedCommitsByDate[key];
 
-        output += `${date}  ${
-            Array.isArray(commits[0].author)
-                ? commits[0].author.join(", ")
-                : commits[0].author
-        }\n\n`;
+        output += `${date}  ${commits[0].authors
+            .map((a) => `${a.name} <${a.email}>`)
+            .join(", ")}\n\n`;
 
         for (const commit of commits) {
-            output += `        ${commit.message.replaceAll(
-                "\n",
-                "\n        "
-            )}\n\n`;
+            output += `     [*] ${commit.subject}\n${commit.body
+                .split("\n")
+                .map((part) => `         ${part}`)
+                .join("\n")}\n\n`;
         }
     }
 
@@ -248,7 +334,7 @@ function printHelp() {
     console.log("Options:");
     console.log("  -h, --help           Show this help and exit.");
     console.log("  -v, --version        Show this script's version.");
-    console.log("  -f, --format=        Set the changelog format.");
+    console.log("  -f, --format         Set the changelog format.");
     console.log("                       Supported formats are: plain,");
     console.log("                       markdown.");
     console.log("  -o, --output=<FILE>  Write the generated changelog to");
@@ -263,10 +349,10 @@ function printHelp() {
 function printVersion() {
     console.log("Copyright (C) 2024 OSN, Inc.");
     console.log(
-        "License GPLv3+: GNU GPL version 3 or later <https://gnu.org/licenses/gpl.html>."
+        "License GPLv3+: GNU GPL version 3 or later <https://gnu.org/licenses/gpl.html>.",
     );
     console.log(
-        "This is free software: you are free to change and redistribute it."
+        "This is free software: you are free to change and redistribute it.",
     );
     console.log("There is NO WARRANTY, to the extent permitted by law.");
     console.log();
@@ -299,8 +385,8 @@ async function main() {
                 },
                 format: {
                     type: "string",
-                    short: "f"
-                }
+                    short: "f",
+                },
             },
         }).values;
     } catch (error) {
@@ -319,13 +405,15 @@ async function main() {
     }
 
     if (options.format && !["markdown", "plain"].includes(options.format)) {
-        perror("option `--format` or `-f` only accepts one of the following: markdown, plain");
+        perror(
+            "option `--format` or `-f` only accepts one of the following: markdown, plain",
+        );
         exit(1);
     }
 
     if (!options.output && options["no-overwrite"]) {
         perror(
-            "option `--no-overwrite' without `--output` does not make sense"
+            "option `--no-overwrite' without `--output` does not make sense",
         );
         exit(1);
     }
@@ -345,10 +433,13 @@ async function main() {
     const filteredCommits = commits.filter(
         (commit) =>
             !/Merge pull request #\d+ from|Merge branch '\S+' of/.test(
-                commit.message
-            )
+                commit.message,
+            ),
     );
-    const changelog = options.format === "markdown" ? generateMarkdownChangelog(filteredCommits) : generateChangelog(filteredCommits);
+    const changelog =
+        options.format === "markdown"
+            ? generateMarkdownChangelog(filteredCommits)
+            : generateChangelog(filteredCommits);
 
     if (options.output) {
         try {
@@ -357,7 +448,7 @@ async function main() {
             perror(
                 `${options.output}: failed to write changelog: ${
                     error?.message ?? error
-                }`
+                }`,
             );
             exit(1);
         }

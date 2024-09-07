@@ -1,9 +1,0 @@
-*.o
-uar
-*.lo
-*.so
-.deps
-*~
-*.a
-bin-exec
-*.uar

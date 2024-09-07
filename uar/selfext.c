@@ -21,11 +21,13 @@
 #ifdef HAVE_PLIBC
 #    include <plibc/errno.h>
 #    include <plibc/stdio.h>
+#    include <plibc/stdlib.h>
 #    include <plibc/string.h>
 #    include <plibc/unistd.h>
 #else
 #    include <errno.h>
 #    include <stdio.h>
+#    include <stdlib.h>
 #    include <string.h>
 #    include <unistd.h>
 #endif
@@ -45,9 +47,18 @@ uar_deinit ()
 {
 }
 
+void
+test ()
+{
+    fwrite ("exits\n", 6, 1, stderr);
+}
+
 int
 uar_main ()
 {
-    printf ("Starting self-extracting archive...\n");
+    // printf ("Starting self-extracting archive...\n");
+    atexit (&test);
+    fwrite ("Starting self-extracting archive...\n", 36, 1, stderr);
+    exit (EXIT_SUCCESS);
     return 0;
 }

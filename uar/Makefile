@@ -11,9 +11,11 @@ uar: libuar.a main.o
 	@echo "  CCLD  $@"
 	@$(CC) $(CFLAGS) -o $@ main.o -L. -luar $(LDLIBS)
 
-bin-exec: libuar.a selfext.o selfext_entry.o
+bin-exec: selfext.o selfext_entry.o
 	@echo "  CCLD  $@"
-	@$(CC) $(CFLAGS) -I../plibc/lib -ffreestanding -nostdlib -e _start -o $@ selfext.o selfext_entry.o ../plibc/lib/libc.a ../plibc/x86_64/libx86_64.a -L. -luar $(LDLIBS)
+	@$(CC) $(CFLAGS) -ffreestanding -nostdlib -e _start -o $@ selfext.o selfext_entry.o ../plibc/lib/libc.a ../plibc/x86_64/libx86_64.a -L. $(LDLIBS)
+
+libuar.a selfext.o selfext_entry.o: CFLAGS += -ffreestanding -nostdlib -I../plibc/lib
 
 %.o: %.s
 	@echo "  AS    $@"
@@ -21,7 +23,7 @@ bin-exec: libuar.a selfext.o selfext_entry.o
 
 %.o: %.c
 	@echo "  CC    $@"
-	@$(CC) $(CFLAGS) -c -o $@ $<
+	$(CC) $(CFLAGS) -c -o $@ $<
 
 libuar.a: uar.o xmalloc.o
 	@echo "  AR    $@"

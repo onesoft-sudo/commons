@@ -38,8 +38,9 @@ _start:
     mov $0, %rdx
     call main
     push %rax
+    call _plibc_call_exit_handlers
     call plibc_deinit
     pop %rdi
-    call exit
+    call _exit
 
 .section .note.GNU-stack,"",@progbits

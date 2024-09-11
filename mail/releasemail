@@ -1,0 +1,332 @@
+#!/bin/sh
+#
+# releasemail -- generate a release announcement email
+#
+# This program is part of OSN Commons.
+# Copyright (C) 2024  OSN Developers.
+#
+# OSN Commons is free software: you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# OSN Commons is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with OSN Commons. If not, see <https://www.gnu.org/licenses/>.
+#
+
+SHORT_OPTIONS="hvr:f:H:A:s:MP:R:n"
+LONG_OPTIONS="help,version,recipients:,from:,header:,attachment:,subject:,mail-now,no-print,project:,release:"
+
+me=$0
+canonical_name=$(echo $me | rev | cut -d'/' -f1 | rev)
+
+if [ $(echo $me | cut -c1) = "/" ]; then
+    me=$canonical_name
+fi
+
+version="1.0.0"
+argv=$(getopt -o $SHORT_OPTIONS --long $LONG_OPTIONS -n "$me" -- "$@")
+
+if [ $? -ne 0 ]; then
+    echo "Try '$0 --help' for more information." >&2
+    exit 1
+fi
+
+eval set -- "$argv"
+
+stdout_is_tty=$?
+
+if [ -t 1 ]; then
+    stdout_is_tty=1
+else
+    stdout_is_tty=0
+fi
+
+usage() {
+    echo "Usage: $0 [OPTION]... [BODY]"
+    echo "       $0 [OPTION]... -"
+    echo "Generate a release announcement email."
+    echo
+    echo "Options:"
+    echo "  -h, --help        Display this help and exit"
+    echo "  -v, --version     Display version information and exit"
+    echo "  -r, --recipients  List of email addresses to send the email to"
+    echo "  -f, --from        Email address to send the email from"
+    echo "  -H, --header      Additional header to include in the email"
+    echo "  -A, --attachment  Attach a file to the email"
+    echo "  -s, --subject     Subject of the email"
+    echo "  -M, --mail-now    Immediately send the email"
+    echo "  -n, --no-print    Do not print the email to stdout"
+    echo "  -P, --project     Project name"
+    echo "  -R, --release     Version number of the release"
+    echo ""
+    echo "Bug reports and general questions should be sent to "
+    echo "<commons@onesoftnet.eu.org>."
+    exit 0
+}
+
+show_version() {
+    echo "releasemail (OSN Commons) v$version"
+    echo ""
+    echo "License GPLv3+: GNU GPL version 3 or later <https://www.gnu.org/licenses/>"
+    echo "This is free software: you are free to change and redistribute it."
+    echo "There is NO WARRANTY, to the extent permitted by law."
+    echo ""
+    echo "Written by Ar Rakin."
+    exit 0
+}
+
+invalid_usage() {
+    echo "$me: $@" >&2
+    echo "Try '$me --help' for more information." >&2
+    exit 1
+}
+
+color() {
+    if [ "$stdout_is_tty" = "1" ]; then
+        echo "\033[$1m$2\033[0m"
+    else
+        echo $2
+    fi
+}
+
+validate_email() {
+    echo "$1" | grep -Eq '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+(\.[a-zA-Z]{2,})?$'
+    return $?
+}
+
+recipients=""
+from=""
+headers=""
+mail_headers=""
+user_body=""
+attachments=""
+user_subject=""
+send=0
+no_print=0
+project=""
+release=""
+
+while true; do
+    case "$1" in
+    -h | --help)
+        usage
+        ;;
+    -v | --version)
+        show_version
+        ;;
+    -r | --recipients)
+        for recipient in $(echo $2 | tr ',' ' '); do
+            if ! validate_email "$recipient"; then
+                invalid_usage "Invalid email address: $recipient"
+            fi
+
+            if [ -z "$recipients" ]; then
+                recipients="$recipient"
+                continue
+            fi
+
+            recipients="$recipients $recipient"ents="$recipients,$recipient"
+        done
+
+        shift 2
+        ;;
+    -f | --from)
+        if ! validate_email "$2"; then
+            invalid_usage "Invalid email address: $recipient"
+        fi
+
+        from=$2
+        shift 2
+        ;;
+    -H | --header)
+        if echo "$2" | grep -Eq '^From:|To:|Subject:'; then
+            invalid_usage "Disallowed header: $2"
+        fi
+
+        if echo "$2" | grep -Eq '^\s*$'; then
+            invalid_usage "Empty header passed to option -- '$1'"
+        fi
+
+        if echo -e "$2" | grep -q $'\n'; then
+            invalid_usage "Header must not have newline character"
+        fi
+
+        name=$(echo "$2" | cut -d':' -f1 | sed 's/^[[:space:]]*//')
+        value=$(echo "$2" | cut -d':' -f2- | sed 's/^[[:space:]]*//')
+        code=197
+
+        case "$name" in
+        X-*)
+            code=33
+            ;;
+        *) ;;
+        esac
+
+        header=$(color "32" "$name:")" $(color "38;5;$code" "$value")"
+
+        if [ -z "$headers" ]; then
+            headers="$header"
+        else
+            headers="$headers\n$header"
+        fi
+
+        quoted_2=$(echo "$2" | sed 's/"/\\"/g')
+        mail_headers="$mail_headers -a \"$quoted_2\""
+        shift 2
+        ;;
+
+    -A | --attachment)
+        escaped=$(echo "$2" | sed 's/"/\\"/g')
+
+        if [ -z "$attachments" ]; then
+            attachments="\"$escaped\""
+        else
+            attachments="$attachments \"$escaped\""
+        fi
+
+        shift 2
+        ;;
+
+    -s | --subject)
+        user_subject="$2"
+        shift 2
+        ;;
+
+    -M | --mail-now)
+        send=1
+        shift
+        ;;
+
+    -n | --no-print)
+        no_print=1
+        shift
+        ;;
+
+    -P | --project)
+        project="$2"
+        shift 2
+        ;;
+
+    -R | --release)
+        release="$2"
+        shift 2
+        ;;
+
+    --)
+        shift
+        break
+        ;;
+
+    -*)
+        invalid_usage "Unknown option: $1"
+        ;;
+    esac
+done
+
+if [ "$@" = "-" ]; then
+    if [ -t 0 ]; then
+        invalid_usage "Cannot read from stdin in interactive mode"
+    fi
+
+    user_body="$(cat)"
+elif [ -n "$@" ]; then
+    user_body="$@"
+fi
+
+if [ -z "$recipients" ]; then
+    invalid_usage "No recipients specified"
+fi
+
+if [ -z "$from" ]; then
+    invalid_usage "No from address specified"
+fi
+
+if [ -z "$user_subject" ] || [ -z "$user_body" ]; then
+    if [ -z "$project" ]; then
+        invalid_usage "No project name specified\nPlease either specify a project name or provide a subject and body"
+    fi
+
+    if [ -z "$release" ]; then
+        invalid_usage "No release version specified\nPlease either specify a release version or provide a subject and body"
+    fi
+fi
+
+if [ -z "$user_subject" ]; then
+    subject="$project v$release released"
+else
+    subject="$user_subject"
+fi
+
+if [ -n "$user_body" ]; then
+    body="$user_body"
+else
+    body="$project v$release has been released. Please visit the project's website for more information."
+    body="$body\nThank you for using $project."
+    body="$body\n\nSincerely,\n$project Developers"
+fi
+
+mail="$(color "32" "To:") $(color "1;38;5;112" "$recipients")\n"
+mail="$mail$(color "32" "Subject:") $(color "38;5;119" "$subject")\n"
+mail="$mail$(color "32" "From:") $(color "38;5;197" "$from")\n"
+
+if [ -n "$headers" ]; then
+    mail="$mail$headers\n"
+fi
+
+mail="$mail\n$body"
+
+if [ $no_print -eq 0 ]; then
+    echo "$mail"
+fi
+
+if [ $send -eq 1 ]; then
+    mail_cmd=$(command -v mail)
+
+    if [ -z "$mail_cmd" ]; then
+        echo "$me: The 'mail' command is not available" >&2
+        echo "$me: Please install a mail client to send emails" >&2
+        exit 1
+    fi
+
+    mail_cmd="$(command -v mail)"
+
+    if [ -z "$mail_cmd" ]; then
+        echo "$me: The 'mail' command is not available" >&2
+        echo "$me: Please install GNU mailutils to send emails" >&2
+        exit 1
+    fi
+
+    mail_cmd="$mail_cmd \"$(echo "$recipients" | sed 's/"/\\"/g')\""
+    mail_cmd="$mail_cmd --content-type='text/plain'"
+    mail_cmd="$mail_cmd -s \"$(echo "$subject" | sed 's/"/\\"/g')\""
+    mail_cmd="$mail_cmd -r \"$(echo "$from" | sed 's/"/\\"/g')\""
+    mail_cmd="$mail_cmd $mail_headers"
+
+    if [ -n "$attachments" ]; then
+        for attachment in $attachments; do
+            mail_cmd="$mail_cmd -A $attachment"
+        done
+    fi
+
+    code=0
+
+    if [ -n "$RELEASEMAIL_DEBUG" ]; then
+        set -x
+    fi
+
+    echo "$body" | eval $mail_cmd
+    set +x
+
+    code=$?
+
+    if [ $code -ne 0 ]; then
+        echo "$me: Failed to send email" >&2
+        exit 1
+    fi
+fi

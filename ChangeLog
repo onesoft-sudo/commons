@@ -1,85 +1,330 @@
+12-09-2024  Ar Rakin <rakinar2@onesoftnet.eu.org>
+
+     [*] feat: add srcstats program
+         
+         Signed-off-by: Ar Rakin <rakinar2@onesoftnet.eu.org>
+         
+
+11-09-2024  Ar Rakin <rakinar2@onesoftnet.eu.org>
+
+     [*] feat: add releasemail script
+         
+         Signed-off-by: Ar Rakin <rakinar2@onesoftnet.eu.org>
+         
+
+10-09-2024  Ar Rakin <rakinar2@onesoftnet.eu.org>
+
+     [*] style: update license comments
+         
+         Signed-off-by: Ar Rakin <rakinar2@onesoftnet.eu.org>
+         
+
+     [*] feat: add addlicense script
+         
+         Signed-off-by: Ar Rakin <rakinar2@onesoftnet.eu.org>
+         
+
+07-09-2024  Ar Rakin <rakinar2@onesoftnet.eu.org>
+
+     [*] chore: remove unneeded files
+         
+         Signed-off-by: Ar Rakin <rakinar2@onesoftnet.eu.org>
+         
+
+     [*] chore: ignore unneeded files
+         
+         Signed-off-by: Ar Rakin <rakinar2@onesoftnet.eu.org>
+         
+
+     [*] chore: add missing files
+         
+         Signed-off-by: Ar Rakin <rakinar2@onesoftnet.eu.org>
+         
+
+30-08-2024  Ar Rakin <rakinar2@onesoftnet.eu.org>
+
+     [*] fix(git:genchangelog): git command fails due to reaching max memory buffer size
+         
+         Signed-off-by: Ar Rakin <rakinar2@onesoftnet.eu.org>
+         
+
+     [*] feat(git:genchangelog): complete rewrite of the changelog generation script
+         
+         Signed-off-by: Ar Rakin <rakinar2@onesoftnet.eu.org>
+         
+
+29-08-2024  Ar Rakin <rakinar2@onesoftnet.eu.org>
+
+     [*] feat(git:genchangelog): now supporting `-f` option
+         
+         The `-f` or `--format` option can change the output format
+         of the script. It currently accepts "plain" and "markdown"
+         as values and defaults to "plain".
+         
+         Signed-off-by: Ar Rakin <rakinar2@onesoftnet.eu.org>
+         
+
+28-08-2024  Ar Rakin <rakinar2@onesoftnet.eu.org>
+
+     [*] feat(git): add git-sync utility script
+         
+
+17-08-2024  Ar Rakin <rakinar2@onesoftnet.eu.org>
+
+     [*] feat(plibc): stdlib.c and exit()
+         
+         Signed-off-by: Ar Rakin <rakinar2@onesoftnet.eu.org>
+         
+
+16-08-2024  Ar Rakin <rakinar2@onesoftnet.eu.org>
+
+     [*] feat: add basic utilities and more system calls
+         
+         Signed-off-by: Ar Rakin <rakinar2@onesoftnet.eu.org>
+         
+
+     [*] feat(uar): add self-extraction tools (incomplete)
+         
+         Signed-off-by: Ar Rakin <rakinar2@onesoftnet.eu.org>
+         
+
+     [*] chore: update .gitignore
+         
+         Signed-off-by: Ar Rakin <rakinar2@onesoftnet.eu.org>
+         
+
+15-08-2024  Ar Rakin <rakinar2@onesoftnet.eu.org>
+
+     [*] feat(plibc): heap operations using brk()
+         
+         Signed-off-by: Ar Rakin <rakinar2@onesoftnet.eu.org>
+         
+
+     [*] feat: add plibc
+         
+         Signed-off-by: Ar Rakin <rakinar2@onesoftnet.eu.org>
+         
+
+12-08-2024  Ar Rakin <rakinar2@onesoftnet.eu.org>
+
+     [*] feat(freehttpd): better error handling
+         
+         Signed-off-by: Ar Rakin <rakinar2@onesoftnet.eu.org>
+         
+
+11-08-2024  Ar Rakin <rakinar2@onesoftnet.eu.org>
+
+     [*] feat(freehttpd): file serving and directory indexing
+         
+         Signed-off-by: Ar Rakin <rakinar2@onesoftnet.eu.org>
+         
+
+10-08-2024  Ar Rakin <rakinar2@onesoftnet.eu.org>
+
+     [*] feat: add freehttpd source files to the project
+         
+         Signed-off-by: Ar Rakin <rakinar2@onesoftnet.eu.org>
+         
+
+     [*] chore: update .clang-{format,tidy}
+         
+         Signed-off-by: Ar Rakin <rakinar2@onesoftnet.eu.org>
+         
+
+     [*] chore: update .gitignore
+         
+         Signed-off-by: Ar Rakin <rakinar2@onesoftnet.eu.org>
+         
+
+     [*] chore: update .editorconfig
+         
+         Signed-off-by: Ar Rakin <rakinar2@onesoftnet.eu.org>
+         
+
+     [*] feat(uar): finalize extraction/creation/listing of archives
+         
+         Signed-off-by: Ar Rakin <rakinar2@onesoftnet.eu.org>
+         
+
 08-08-2024  Ar Rakin <rakinar2@onesoftnet.eu.org>
 
-        chore: update .clang-format
+     [*] chore: update changelog
+         
+         Signed-off-by: Ar Rakin <rakinar2@onesoftnet.eu.org>
+         
 
-        feat(uar): better content listing; including owner and group info
+     [*] chore: update .clang-format
+         
+         Signed-off-by: Ar Rakin <rakinar2@onesoftnet.eu.org>
+         
 
-        chore: update todos
+     [*] feat(uar): better content listing; including owner and group info
+         
+         Signed-off-by: Ar Rakin <rakinar2@onesoftnet.eu.org>
+         
 
-        fix(genchangelog): unexpected zero based month numbers
+     [*] chore: update todos
+         
+         Signed-off-by: Ar Rakin <rakinar2@onesoftnet.eu.org>
+         
 
-        fix(uar): better error messages during archive creation
+     [*] fix(genchangelog): unexpected zero based month numbers
+         
+         Signed-off-by: Ar Rakin <rakinar2@onesoftnet.eu.org>
+         
+
+     [*] fix(uar): better error messages during archive creation
+         
+         Signed-off-by: Ar Rakin <rakinar2@onesoftnet.eu.org>
+         
 
 07-08-2024  Ar Rakin <rakinar2@onesoftnet.eu.org>
 
-        chore: update changelog
+     [*] chore: update changelog
+         
+         Signed-off-by: Ar Rakin <rakinar2@onesoftnet.eu.org>
+         
 
-        refactor(uar): better I/O strategies to decrease memory usage
+     [*] refactor(uar): better I/O strategies to decrease memory usage
+         
+         Signed-off-by: Ar Rakin <rakinar2@onesoftnet.eu.org>
+         
 
-        feat(uar): add listing support
+     [*] feat(uar): add listing support
+         
+         Signed-off-by: Ar Rakin <rakinar2@onesoftnet.eu.org>
+         
 
 06-08-2024  Ar Rakin <rakinar2@onesoftnet.eu.org>
 
-        chore: update todos
+     [*] chore: update todos
+         
+         Signed-off-by: Ar Rakin <rakinar2@onesoftnet.eu.org>
+         
 
-        fix(uar): io logging
+     [*] fix(uar): io logging
+         
+         Signed-off-by: Ar Rakin <rakinar2@onesoftnet.eu.org>
+         
 
-        chore: fixup files
+     [*] chore: fixup files
+         
+         Signed-off-by: Ar Rakin <rakinar2@onesoftnet.eu.org>
+         
 
-        chore: update readme
+     [*] chore: update readme
+         
+         Signed-off-by: Ar Rakin <rakinar2@onesoftnet.eu.org>
+         
 
-        fix(uar): memory corruption issues and segmentation faults
+     [*] fix(uar): memory corruption issues and segmentation faults
+         
+         Signed-off-by: Ar Rakin <rakinar2@onesoftnet.eu.org>
+         
 
 05-08-2024  Ar Rakin <rakinar2@onesoftnet.eu.org>
 
-        chore: update changelog
+     [*] chore: update changelog
+         
+         Signed-off-by: Ar Rakin <rakinar2@onesoftnet.eu.org>
+         
 
-        feat: add programs implementing the universal archive format
+     [*] feat: add programs implementing the universal archive format
+         
+         Signed-off-by: Ar Rakin <rakinar2@onesoftnet.eu.org>
+         
 
 04-08-2024  Ar Rakin <rakinar2@onesoftnet.eu.org>
 
-        fix(mkdist): incorrect root directory name for created tarballs
+     [*] fix(mkdist): incorrect root directory name for created tarballs
+         
+         Signed-off-by: Ar Rakin <rakinar2@onesoftnet.eu.org>
+         
 
-        fix(distupload): correct default remote url in help text
+     [*] fix(distupload): correct default remote url in help text
+         
+         Signed-off-by: Ar Rakin <rakinar2@onesoftnet.eu.org>
+         
 
-        chore: correct mailing list
+     [*] chore: correct mailing list
+         
+         Signed-off-by: Ar Rakin <rakinar2@onesoftnet.eu.org>
+         
 
-        chore: add .editorconfig
+     [*] chore: add .editorconfig
+         
+         Signed-off-by: Ar Rakin <rakinar2@onesoftnet.eu.org>
+         
 
-        style: reformat files
+     [*] style: reformat files
+         
+         Signed-off-by: Ar Rakin <rakinar2@onesoftnet.eu.org>
+         
 
 03-08-2024  Ar Rakin <rakinar2@onesoftnet.eu.org>
 
-        chore: add changelog
+     [*] chore: add changelog
+         
+         Signed-off-by: Ar Rakin <rakinar2@onesoftnet.eu.org>
+         
 
-        fix(git:genchangelog): ignore branch and PR merge commit messages
+     [*] fix(git:genchangelog): ignore branch and PR merge commit messages
+         
+         Signed-off-by: Ar Rakin <rakinar2@onesoftnet.eu.org>
+         
 
-        chore: add .prettierrc
+     [*] chore: add .prettierrc
+         
+         Signed-off-by: Ar Rakin <rakinar2@onesoftnet.eu.org>
+         
 
-        feat(dist:mkdist): a script to automate generation of software distributions
+     [*] feat(dist:mkdist): a script to automate generation of software distributions
+         
+         Signed-off-by: Ar Rakin <rakinar2@onesoftnet.eu.org>
+         
 
-        fix(dist:distupload): version text
+     [*] fix(dist:distupload): version text
+         
+         Signed-off-by: Ar Rakin <rakinar2@onesoftnet.eu.org>
+         
 
-        fix: correct bug report email
+     [*] fix: correct bug report email
+         
 
 02-08-2024  Ar Rakin <rakinar2@onesoftnet.eu.org>
 
-        feat(dist:distupload): generate gpg signature of files being uploaded
+     [*] feat(dist:distupload): generate gpg signature of files being uploaded
+         
+         Signed-off-by: Ar Rakin <rakinar2@onesoftnet.eu.org>
+         
 
 01-08-2024  Ar Rakin <rakinar2@onesoftnet.eu.org>
 
-        feat: add distupload helper script
+     [*] feat: add distupload helper script
+         
+         Signed-off-by: Ar Rakin <rakinar2@onesoftnet.eu.org>
+         
 
-        chore: add gitignore
+     [*] chore: add gitignore
+         
+         Signed-off-by: Ar Rakin <rakinar2@onesoftnet.eu.org>
+         
 
 28-07-2024  Ar Rakin <68149013+virtual-designer@users.noreply.github.com>
 
-        chore: update README.org
+     [*] chore: update README.org
+         
 
 28-07-2024  Ar Rakin <rakinar2@onesoftnet.eu.org>
 
-        chore: update readme
+     [*] chore: update readme
+         
 
-        chore: rename readme file to README.org
+     [*] chore: rename readme file to README.org
+         
+         Signed-off-by: Ar Rakin <rakinar2@onesoftnet.eu.org>
+         
 
-        feat: initial commit
+     [*] feat: initial commit
+         
+         Signed-off-by: Ar Rakin <rakinar2@onesoftnet.eu.org>

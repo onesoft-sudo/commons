@@ -149,7 +149,7 @@ while [ $# -gt 0 ]; do
             exit 2
         fi
 
-        if [ ! -f "$2" ]; then
+        if [ ! -e "$2" ]; then
             echo "$me: $2: No such file or directory" >&2
             exit 2
         fi
@@ -181,7 +181,7 @@ while [ $# -gt 0 ]; do
             exit 2
         fi
 
-        if [ ! -f "$2" ]; then
+        if [ ! -e "$2" ]; then
             echo "$me: $2: No such file or directory" >&2
             exit 2
         fi
@@ -219,7 +219,10 @@ while [ $# -gt 0 ]; do
                 exit 2
             fi
 
-            license_notice="$(cat)"
+            license_notice="$(
+                cat
+                echo E
+            )"
             stdin_read="notice"
         else
             if [ ! -f "$2" ]; then
@@ -228,9 +231,13 @@ while [ $# -gt 0 ]; do
             fi
 
             license_notice_file="$2"
-            license_notice=$(cat $2)
+            license_notice="$(
+                cat "$2"
+                echo E
+            )"
         fi
 
+        license_notice=${license_notice%E}
         shift
         ;;
 
@@ -294,11 +301,10 @@ success=0
 
 insert_license() {
     set -e
-    local file=$1
-    local tmpfile=$(mktemp)
+    local file="$1"
+    local tmpfile="$(mktemp)"
 
     echo "$license_notice" >$tmpfile
-    echo "" >>$tmpfile
     cat $file >>$tmpfile
     mv $tmpfile $file
     set +e
@@ -395,8 +401,8 @@ process_files() {
                 IFS="$ifs"
             fi
 
-            if file "$file" | grep -Eq 'binary|ELF|executable|data'; then
-                echo "$me: skipping binary file: $file"
+            if file "$file" -b | grep -Eq 'binary|ELF|executable|data'; then
+                echo "$me: skipping binary/data file: $file"
                 continue
             fi
 
@@ -410,7 +416,7 @@ process_files() {
             fi
 
             echo "$me: inserting license comment to: $file"
-            insert_license $file
+            insert_license "$file"
         done
 
         success=1

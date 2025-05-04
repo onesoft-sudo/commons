@@ -13,9 +13,9 @@ To get started, follow these steps:
 **** Download OSN Commons
 
 You can clone the entire repository:
-#+BEGIN_SRC bash
+
   git clone https://github.com/onesoft-sudo/commons.git
-#+END_SRC
+
 Or, you can browse the code, and pick the tools you need and only
 download them. Most of these programs and tools are standalone.
 
